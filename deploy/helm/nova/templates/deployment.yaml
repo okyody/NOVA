@@ -1,0 +1,93 @@
+{{- /*
+NOVA Helm Deployment Template
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nova.fullname" . }}
+  labels:
+    {{- include "nova.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "nova.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nova.selectorLabels" . | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8765"
+        prometheus.io/path: "/metrics"
+    spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ include "nova.serviceAccountName" . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8765
+              name: http
+            - containerPort: 8767
+              name: avatar-ws
+          env:
+            - name: NOVA_LLM__BASE_URL
+              value: {{ .Values.nova.llm.baseUrl | quote }}
+            - name: NOVA_LLM__MODEL
+              value: {{ .Values.nova.llm.model | quote }}
+            - name: NOVA_KNOWLEDGE__ENABLED
+              value: {{ .Values.nova.knowledge.enabled | quote }}
+            - name: NOVA_KNOWLEDGE__VECTOR_BACKEND
+              value: {{ .Values.nova.knowledge.vectorBackend | quote }}
+            - name: NOVA_KNOWLEDGE__QDRANT_URL
+              value: {{ .Values.nova.knowledge.qdrantUrl | quote }}
+            - name: NOVA_PERSIST__ENABLED
+              value: {{ .Values.nova.persistence.enabled | quote }}
+            - name: NOVA_PERSIST__BACKEND
+              value: {{ .Values.nova.persistence.backend | quote }}
+            - name: NOVA_PERSIST__REDIS_URL
+              value: {{ .Values.nova.persistence.redisUrl | quote }}
+            - name: NOVA_AUTH__ENABLED
+              value: {{ .Values.nova.auth.enabled | quote }}
+            - name: NOVA_AUTH__JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nova.fullname" . }}-secrets
+                  key: jwt-secret
+            - name: NOVA_OBSERVABILITY__TRACING_ENABLED
+              value: {{ .Values.nova.observability.tracingEnabled | quote }}
+            - name: NOVA_OBSERVABILITY__TRACING_ENDPOINT
+              value: {{ .Values.nova.observability.tracingEndpoint | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

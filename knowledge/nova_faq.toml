@@ -1,0 +1,54 @@
+# NOVA FAQ Knowledge Base
+# This file is auto-loaded on startup when knowledge.enabled=true
+
+[[documents]]
+text = """Nova是一个AI虚拟主播系统。她能够实时阅读弹幕、理解情绪、生成语音回应。
+她支持Bilibili、抖音、YouTube、Twitch等多个直播平台。"""
+source_id = "nova_intro"
+[documents.metadata]
+category = "about"
+
+[[documents]]
+text = """Nova的记忆系统能记住常来的观众，了解他们的喜好和互动历史。
+当老观众回来时，Nova会主动打招呼，让每个人都感受到被关注。"""
+source_id = "nova_memory"
+[documents.metadata]
+category = "feature"
+
+[[documents]]
+text = """Nova支持多种TTS语音后端：edge-tts（免费低延迟）、CosyVoice2（本地高质量）、
+GPT-SoVITS（音色克隆）、Azure（微软云端）、ElevenLabs（英文高质量）。
+还支持自动降级链，当一个后端失败时自动切换到备用后端。"""
+source_id = "nova_tts"
+[documents.metadata]
+category = "feature"
+
+[[documents]]
+text = """Nova拥有情绪系统，能够根据弹幕内容、礼物、观众互动实时调整情绪状态。
+情绪会影响语音的语调、语速和能量，让回应更加自然生动。"""
+source_id = "nova_emotion"
+[documents.metadata]
+category = "feature"
+
+[[documents]]
+text = """Nova的安全守卫系统会实时检查所有输出内容，防止不当言论。
+包括关键词过滤和语义检查两个层级，确保直播内容安全合规。"""
+source_id = "nova_safety"
+[documents.metadata]
+category = "feature"
+
+[[documents]]
+text = """如何部署Nova：1. 安装Python 3.11+ 2. 运行 pip install -e . 安装依赖
+3. 复制nova.config.example.json为nova.config.json并配置
+4. 启动Ollama并拉取模型：ollama pull qwen2.5:14b
+5. 运行 python -m apps.nova_server.main 启动服务"""
+source_id = "nova_deploy"
+[documents.metadata]
+category = "faq"
+
+[[documents]]
+text = """Nova支持Docker部署。使用docker-compose up即可一键启动Nova、Ollama和Qdrant。
+生产环境建议启用知识库（knowledge.enabled=true）和Qdrant向量数据库。"""
+source_id = "nova_docker"
+[documents.metadata]
+category = "faq"

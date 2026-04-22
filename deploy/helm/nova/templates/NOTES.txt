@@ -1,0 +1,5 @@
+name: nova
+version: 2.0.0
+description: NOVA — Next-gen Omnimodal Virtual Agent
+apiVersion: v2
+appVersion: "2.0.0"

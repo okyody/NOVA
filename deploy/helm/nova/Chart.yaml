@@ -1,0 +1,14 @@
+apiVersion: v2
+name: nova
+description: NOVA — Next-gen Omnimodal Virtual Agent
+type: application
+version: 2.0.0
+appVersion: "2.0.0"
+home: https://github.com/nova-ai/nova
+maintainers:
+  - name: NOVA Team
+keywords:
+  - ai
+  - virtual-streamer
+  - llm
+  - rag

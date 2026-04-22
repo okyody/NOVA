@@ -1,0 +1,76 @@
+groups:
+  - name: nova-alerts
+    rules:
+      # ─── Critical Alerts ─────────────────────────────────────────────────────
+      - alert: NovaHighErrorRate
+        expr: rate(nova_events_dropped_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "NOVA high event drop rate"
+          description: "More than 10 events/sec are being dropped. Queue may be overwhelmed."
+
+      - alert: NovaCircuitBreakerOpen
+        expr: nova_circuit_breaker_state{name="llm"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LLM circuit breaker is OPEN"
+          description: "The LLM circuit breaker has been open for more than 1 minute. All LLM requests are being rejected."
+
+      - alert: NovaPipelineLatencyHigh
+        expr: histogram_quantile(0.95, rate(nova_pipeline_latency_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pipeline latency exceeds 5s (p95)"
+          description: "The end-to-end pipeline p95 latency is above 5 seconds."
+
+      - alert: NovaLLMLatencyHigh
+        expr: histogram_quantile(0.95, rate(nova_llm_latency_seconds_bucket[5m])) > 15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM latency exceeds 15s (p95)"
+          description: "LLM response p95 latency is above 15 seconds. Model may be overloaded."
+
+      - alert: NovaQueueDepthHigh
+        expr: nova_eventbus_queue_depth > 1000
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "EventBus queue depth exceeds 1000"
+          description: "Event queue is backing up. Subscribers may be slow or unavailable."
+
+      - alert: NovaSafetyBlocksSpike
+        expr: rate(nova_safety_blocks_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unusual spike in safety blocks"
+          description: "More than 5 safety blocks per second. May indicate a coordinated attack or content issue."
+
+      # ─── Info Alerts ─────────────────────────────────────────────────────────
+      - alert: NovaPodRestarted
+        expr: increase(kube_pod_container_status_restarts_total{pod=~"nova-.*"}[1h]) > 0
+        for: 1m
+        labels:
+          severity: info
+        annotations:
+          summary: "NOVA pod restarted"
+          description: "A NOVA pod has restarted in the last hour. Check logs for crash cause."
+
+      - alert: NovaHighMemoryUsage
+        expr: container_memory_working_set_bytes{pod=~"nova-.*"} / container_spec_memory_limit_bytes{pod=~"nova-.*"} > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "NOVA memory usage above 85%"
+          description: "Pod {{ $labels.pod }} is using more than 85% of its memory limit."

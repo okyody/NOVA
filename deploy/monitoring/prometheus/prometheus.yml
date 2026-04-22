@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alerts.yaml"
+
+scrape_configs:
+  - job_name: "nova"
+    metrics_path: "/metrics"
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["nova:8765"]
+    dns_sd_configs:
+      - names: ["nova"]
+        type: "A"
+        port: 8765
+
+  - job_name: "qdrant"
+    static_configs:
+      - targets: ["qdrant:6333"]
+
+  - job_name: "redis"
+    static_configs:
+      - targets: ["redis:6379"]
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]

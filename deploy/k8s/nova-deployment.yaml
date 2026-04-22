@@ -1,0 +1,233 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nova
+  labels:
+    app: nova
+    version: v2.0.0
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nova
+  template:
+    metadata:
+      labels:
+        app: nova
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8765"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: nova
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: nova
+          image: nova:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8765
+              name: http
+              protocol: TCP
+            - containerPort: 8767
+              name: avatar-ws
+              protocol: TCP
+          env:
+            - name: NOVA_CONFIG
+              value: /app/nova.config.json
+            - name: NOVA_LLM__BASE_URL
+              value: http://ollama:11434/v1
+            - name: NOVA_KNOWLEDGE__ENABLED
+              value: "true"
+            - name: NOVA_KNOWLEDGE__VECTOR_BACKEND
+              value: qdrant
+            - name: NOVA_KNOWLEDGE__QDRANT_URL
+              value: http://qdrant:6333
+            - name: NOVA_PERSIST__ENABLED
+              value: "true"
+            - name: NOVA_PERSIST__BACKEND
+              value: redis
+            - name: NOVA_PERSIST__REDIS_URL
+              value: redis://redis:6379
+            - name: NOVA_AUTH__ENABLED
+              value: "true"
+            - name: NOVA_AUTH__JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nova-secrets
+                  key: jwt-secret
+            - name: NOVA_OBSERVABILITY__TRACING_ENABLED
+              value: "true"
+            - name: NOVA_OBSERVABILITY__TRACING_ENDPOINT
+              value: http://otel-collector:4317
+          envFrom:
+            - secretRef:
+                name: nova-secrets
+                optional: true
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: config
+              mountPath: /app/nova.config.json
+              subPath: nova.config.json
+              readOnly: true
+            - name: characters
+              mountPath: /app/characters
+              readOnly: true
+            - name: knowledge
+              mountPath: /app/knowledge
+              readOnly: true
+            - name: state
+              mountPath: /app/data/state
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: nova-config
+        - name: characters
+          configMap:
+            name: nova-characters
+        - name: knowledge
+          configMap:
+            name: nova-knowledge
+        - name: state
+          emptyDir: {}
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nova
+  labels:
+    app: nova
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8765
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: 8767
+      targetPort: avatar-ws
+      protocol: TCP
+      name: avatar-ws
+  selector:
+    app: nova
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nova-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nova
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Pods
+      pods:
+        metric:
+          name: nova_eventbus_queue_depth
+        target:
+          type: AverageValue
+          averageValue: "100"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+      selectPolicy: Max
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nova-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: nova
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nova-config
+data:
+  nova.config.json: |
+    {
+      "llm": {
+        "base_url": "http://ollama:11434/v1",
+        "model": "qwen2.5:14b"
+      },
+      "knowledge": {
+        "enabled": true,
+        "embedding_backend": "ollama",
+        "vector_backend": "qdrant"
+      },
+      "persistence": {
+        "enabled": true,
+        "backend": "redis"
+      }
+    }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nova-secrets
+type: Opaque
+stringData:
+  jwt-secret: "change-me-in-production-use-a-strong-random-string"
+  llm-api-key: "ollama"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nova

@@ -1,0 +1,144 @@
+{
+  "_comment": "NOVA runtime configuration. Copy to nova.config.json and edit.",
+
+  "llm": {
+    "_comment": "Swap base_url to change provider. API is OpenAI-compatible.",
+    "base_url": "http://localhost:11434/v1",
+    "api_key": "ollama",
+    "model": "qwen2.5:14b",
+    "_alternatives": {
+      "openai":    {"base_url": "https://api.openai.com/v1", "model": "gpt-4o"},
+      "claude":    {"base_url": "https://claude-openai-proxy.example/v1", "model": "claude-sonnet-4-20250514"},
+      "deepseek":  {"base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat"}
+    }
+  },
+
+  "voice": {
+    "backend": "edge_tts",
+    "_backends": ["edge_tts", "cosyvoice2", "gptsovits", "azure", "elevenlabs", "chain"],
+    "voice_id": "zh-CN-XiaoyiNeural",
+    "_voices": {
+      "zh_female_warm":   "zh-CN-XiaoyiNeural",
+      "zh_female_cute":   "zh-CN-XiaohanNeural",
+      "zh_male_deep":     "zh-CN-YunjianNeural",
+      "en_female_casual": "en-US-JennyNeural"
+    },
+    "chain_order": ["cosyvoice2", "edge_tts"],
+    "_chain_comment": "When backend=chain, tries backends in order, falling back on failure",
+
+    "cosyvoice2_url": "http://localhost:7860",
+    "gptsovits_url": "http://localhost:9880",
+    "gptsovits_speaker": "nova",
+    "azure_key": "",
+    "azure_region": "eastasia",
+    "azure_voice": "zh-CN-XiaoxiaoNeural",
+    "elevenlabs_key": "",
+    "elevenlabs_voice": "21m00Tcm4TlvDq8ikWAM"
+  },
+
+  "character": {
+    "path": "characters/nova_default.toml",
+    "_comment": "Path to .toml character card. Leave empty for built-in default."
+  },
+
+  "avatar": {
+    "enabled": false,
+    "ws_port": 8767,
+    "idle_blink_interval_s": 4.0,
+    "_comment": "Enable to drive Live2D avatar via WebSocket. Connect OBS browser source to ws://localhost:8767"
+  },
+
+  "lipsync": {
+    "enabled": true,
+    "smoothing": 0.3,
+    "_comment": "Generates mouth_open values from audio energy for avatar lip sync"
+  },
+
+  "perception": {
+    "aggregator_window_ms": 300,
+    "silence_threshold_s": 30,
+    "context_update_s": 10,
+    "_comment": "SemanticAggregator: 300ms window for clustering. SilenceDetector: trigger after 30s quiet. ContextSensor: update every 10s."
+  },
+
+  "knowledge": {
+    "enabled": false,
+    "_comment": "Enable RAG knowledge base for enhanced Q&A. Requires embedding service.",
+    "embedding": {
+      "backend": "ollama",
+      "_backends": ["ollama", "openai", "mock"],
+      "base_url": "http://localhost:11434",
+      "model": "nomic-embed-text"
+    },
+    "vector_store": {
+      "backend": "memory",
+      "_backends": ["memory", "qdrant"],
+      "url": "http://localhost:6333",
+      "collection": "nova_knowledge"
+    }
+  },
+
+  "nlu": {
+    "enabled": true,
+    "_comment": "Intent classifier for better response selection. Rule-based by default, LLM fallback when available."
+  },
+
+  "tools": {
+    "enabled": true,
+    "_comment": "LLM tool/function calling. Enables search_knowledge, get_viewer_info, recall_memory, set_emotion."
+  },
+
+  "consolidation": {
+    "enabled": true,
+    "_comment": "Memory consolidation: summarizes working memory into long-term episodic memories."
+  },
+
+  "platforms": [
+    {
+      "_comment": "Bilibili live room",
+      "platform": "bilibili",
+      "room_id": 12345678,
+      "token": "",
+      "uid": 0
+    },
+    {
+      "_comment": "Douyin live (requires webhook callback)",
+      "platform": "douyin",
+      "room_id": "",
+      "app_id": "",
+      "app_secret": "",
+      "webhook_port": 8766
+    },
+    {
+      "_comment": "YouTube Live Chat (requires API key)",
+      "platform": "youtube",
+      "live_chat_id": "",
+      "api_key": "",
+      "poll_interval": 3.0
+    },
+    {
+      "_comment": "Twitch IRC (requires OAuth token)",
+      "platform": "twitch",
+      "channel": "",
+      "oauth_token": "",
+      "username": "nova_bot"
+    }
+  ],
+
+  "ops": {
+    "safety": {
+      "enabled": true,
+      "semantic_check_rate": 0.05
+    },
+    "metrics_port": 9090,
+    "log_level": "INFO"
+  },
+
+  "state_persistence": {
+    "enabled": false,
+    "backend": "json",
+    "_backends": ["json", "redis"],
+    "base_dir": "data/state",
+    "redis_url": "redis://localhost:6379"
+  }
+}

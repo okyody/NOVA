@@ -1,0 +1,22 @@
+{{- /*
+NOVA Helm Service Template
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nova.fullname" . }}
+  labels:
+    {{- include "nova.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.ports.http }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.service.ports.avatarWs }}
+      targetPort: avatar-ws
+      protocol: TCP
+      name: avatar-ws
+  selector:
+    {{- include "nova.selectorLabels" . | nindent 4 }}

@@ -1,0 +1,109 @@
+# NOVA Helm Values
+# =================
+# Customize for your deployment environment.
+
+replicaCount: 2
+
+image:
+  repository: nova
+  pullPolicy: IfNotPresent
+  tag: "2.0.0"
+
+serviceAccount:
+  create: true
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+service:
+  type: ClusterIP
+  ports:
+    http: 8765
+    avatarWs: 8767
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/websocket-services: nova
+  hosts:
+    - host: nova.example.com
+      paths:
+        - path: /
+          port: http
+        - path: /ws
+          port: avatarWs
+  tls:
+    - secretName: nova-tls
+      hosts:
+        - nova.example.com
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# NOVA application configuration
+nova:
+  llm:
+    baseUrl: http://ollama:11434/v1
+    model: qwen2.5:14b
+  knowledge:
+    enabled: true
+    embeddingBackend: ollama
+    vectorBackend: qdrant
+    qdrantUrl: http://qdrant:6333
+  persistence:
+    enabled: true
+    backend: redis
+    redisUrl: redis://redis:6379
+  auth:
+    enabled: true
+  observability:
+    tracingEnabled: true
+    tracingEndpoint: http://otel-collector:4317
+
+secrets:
+  jwtSecret: change-me-in-production
+  llmApiKey: ollama
+
+# External dependencies
+ollama:
+  enabled: true
+  gpu: true
+
+qdrant:
+  enabled: true
+
+redis:
+  enabled: true
+  auth:
+    enabled: true
+
+prometheus:
+  enabled: true
+
+grafana:
+  enabled: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
