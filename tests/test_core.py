@@ -6,7 +6,12 @@ Run: pytest tests/ -v --asyncio-mode=auto
 import asyncio
 import pytest
 
-from packages.core.event_bus import EventBus, InMemoryEventTransportBackend, create_event_transport_backend
+from packages.core.event_bus import (
+    EventBus,
+    InMemoryEventTransportBackend,
+    RedisStreamsEventTransportBackend,
+    create_event_transport_backend,
+)
 from packages.core.types import (
     EmotionLabel,
     EventType,
@@ -137,6 +142,85 @@ async def test_event_bus_ingress_idempotency():
 def test_create_event_transport_backend_defaults_to_memory():
     backend = create_event_transport_backend({"backend": "memory"})
     assert isinstance(backend, InMemoryEventTransportBackend)
+
+
+@pytest.mark.asyncio
+async def test_redis_transport_reclaims_stale_pending_message():
+    class _FakeRedis:
+        def __init__(self):
+            self.acked = []
+            self.claimed = [("1-0", {
+                "event_id": "evt-1",
+                "type": "platform.chat_message",
+                "priority": "2",
+                "timestamp": "2026-04-23T12:00:00",
+                "source": "bilibili",
+                "trace_id": "",
+                "payload": "{\"text\": \"hello\"}",
+            })]
+
+        async def xpending_range(self, *args, **kwargs):
+            return [{"message_id": "1-0", "times_delivered": 2}]
+
+        async def xclaim(self, *args, **kwargs):
+            return self.claimed
+
+        async def xack(self, stream, group, redis_id):
+            self.acked.append((stream, group, redis_id))
+
+    backend = RedisStreamsEventTransportBackend()
+    backend._client = _FakeRedis()
+    backend.configure_consumer(group="g", consumer="c", pending_min_idle_ms=1, reclaim_batch_size=10, max_retries=5)
+
+    events = await backend.consume(block_ms=1, count=10)
+
+    assert len(events) == 1
+    assert events[0].payload["text"] == "hello"
+    assert backend._client.acked == [(backend._stream, "g", "1-0")]
+
+
+@pytest.mark.asyncio
+async def test_redis_transport_moves_over_retried_message_to_dlq():
+    class _FakeRedis:
+        def __init__(self):
+            self.dlq = []
+            self.acked = []
+
+        async def xpending_range(self, *args, **kwargs):
+            return [{"message_id": "9-0", "times_delivered": 8}]
+
+        async def xrange(self, *args, **kwargs):
+            return [("9-0", {
+                "event_id": "evt-9",
+                "type": "platform.chat_message",
+                "priority": "2",
+                "timestamp": "2026-04-23T12:00:00",
+                "source": "bilibili",
+                "trace_id": "",
+                "payload": "{\"text\": \"retry me\"}",
+            })]
+
+        async def xadd(self, stream, payload):
+            self.dlq.append((stream, payload))
+
+        async def xack(self, stream, group, redis_id):
+            self.acked.append((stream, group, redis_id))
+
+        async def xclaim(self, *args, **kwargs):
+            return []
+
+        async def xreadgroup(self, *args, **kwargs):
+            return []
+
+    backend = RedisStreamsEventTransportBackend(stream="nova:events")
+    backend._client = _FakeRedis()
+    backend.configure_consumer(group="g", consumer="c", pending_min_idle_ms=1, reclaim_batch_size=10, max_retries=5, dlq_stream="nova:events:dlq")
+
+    events = await backend.consume(block_ms=1, count=10)
+
+    assert events == []
+    assert backend._client.dlq[0][0] == "nova:events:dlq"
+    assert backend._client.acked == [("nova:events", "g", "9-0")]
 
 
 @pytest.mark.asyncio

@@ -159,6 +159,10 @@ class NovaApp:
             "stream": runtime_cfg.event_bus_stream,
             "consumer_group": runtime_cfg.event_bus_consumer_group,
             "consumer_name": runtime_cfg.event_bus_consumer_name,
+            "pending_min_idle_ms": runtime_cfg.event_bus_pending_min_idle_ms,
+            "reclaim_batch_size": runtime_cfg.event_bus_reclaim_batch_size,
+            "max_retries": runtime_cfg.event_bus_max_retries,
+            "dlq_stream": runtime_cfg.event_bus_dlq_stream,
         })
 
         # 1. Event bus

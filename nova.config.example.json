@@ -115,7 +115,11 @@
     "event_bus_backend": "memory",
     "event_bus_stream": "nova:events",
     "event_bus_consumer_group": "nova-workers",
-    "event_bus_consumer_name": "nova-consumer-1"
+    "event_bus_consumer_name": "nova-consumer-1",
+    "event_bus_pending_min_idle_ms": 30000,
+    "event_bus_reclaim_batch_size": 20,
+    "event_bus_max_retries": 5,
+    "event_bus_dlq_stream": "nova:events:dlq"
   },
   "platforms": [
     {

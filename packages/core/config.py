@@ -192,8 +192,10 @@ class RuntimeConfig(BaseSettings):
     event_bus_stream: str = "nova:events"
     event_bus_consumer_group: str = "nova-workers"
     event_bus_consumer_name: str = "nova-consumer-1"
-    event_bus_consumer_group: str = "nova-workers"
-    event_bus_consumer_name: str = "nova-consumer-1"
+    event_bus_pending_min_idle_ms: int = 30000
+    event_bus_reclaim_batch_size: int = 20
+    event_bus_max_retries: int = 5
+    event_bus_dlq_stream: str = "nova:events:dlq"
 
 
 class PlatformConfig(BaseSettings):

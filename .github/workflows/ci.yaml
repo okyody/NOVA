@@ -76,6 +76,15 @@ jobs:
       - name: Run docker compose startup smoke
         run: python deploy/tools/compose_smoke.py --timeout 120
 
+  smoke-compose-workers:
+    name: Compose Workers Smoke
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run docker compose workers smoke
+        run: python deploy/tools/compose_workers_smoke.py --timeout 150
+
   # ─── Security Scan ────────────────────────────────────────────────────────
   security:
     name: Security Scan
@@ -99,7 +108,7 @@ jobs:
   build:
     name: Build & Push Docker
     runs-on: ubuntu-latest
-    needs: [test, security, smoke-compose]
+    needs: [test, security, smoke-compose, smoke-compose-workers]
     permissions:
       contents: read
       packages: write

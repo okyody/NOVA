@@ -94,11 +94,29 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
         self._stream = stream
         self._consumer_group = "nova-workers"
         self._consumer_name = "nova-consumer-1"
+        self._pending_min_idle_ms = 30000
+        self._reclaim_batch_size = 20
+        self._max_retries = 5
+        self._dlq_stream = f"{stream}:dlq"
         self._client: Any = None
 
-    def configure_consumer(self, *, group: str, consumer: str) -> None:
+    def configure_consumer(
+        self,
+        *,
+        group: str,
+        consumer: str,
+        pending_min_idle_ms: int = 30000,
+        reclaim_batch_size: int = 20,
+        max_retries: int = 5,
+        dlq_stream: str | None = None,
+    ) -> None:
         self._consumer_group = group
         self._consumer_name = consumer
+        self._pending_min_idle_ms = pending_min_idle_ms
+        self._reclaim_batch_size = reclaim_batch_size
+        self._max_retries = max_retries
+        if dlq_stream:
+            self._dlq_stream = dlq_stream
 
     def _client_or_raise(self) -> Any:
         if self._client is None:
@@ -113,6 +131,10 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
         client = self._client_or_raise()
         try:
             await client.xgroup_create(self._stream, self._consumer_group, id="$", mkstream=True)
+        except Exception:
+            pass
+        try:
+            await client.xgroup_create(self._dlq_stream, self._consumer_group, id="$", mkstream=True)
         except Exception:
             pass
 
@@ -137,6 +159,10 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
 
     async def consume(self, *, block_ms: int = 1000, count: int = 10) -> list[NovaEvent]:
         client = self._client_or_raise()
+        reclaimed = await self._reclaim_stale_messages(count=min(count, self._reclaim_batch_size))
+        if reclaimed:
+            return reclaimed
+
         results = await client.xreadgroup(
             self._consumer_group,
             self._consumer_name,
@@ -147,29 +173,88 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
         events: list[NovaEvent] = []
         for _stream_name, items in results:
             for redis_id, fields in items:
-                try:
-                    event = NovaEvent(
-                        type=EventType(fields["type"]),
-                        payload=json.loads(fields.get("payload", "{}")),
-                        priority=int(fields.get("priority", "2")),
-                        event_id=fields.get("event_id", redis_id),
-                        timestamp=datetime.fromisoformat(fields["timestamp"]) if fields.get("timestamp") else datetime.utcnow(),
-                        source=fields.get("source", "unknown"),
-                        trace_id=fields.get("trace_id") or None,
-                    )
-                except Exception:
-                    event = NovaEvent(
-                        type=EventType(fields["type"]),
-                        payload=json.loads(fields.get("payload", "{}")),
-                        priority=int(fields.get("priority", "2")),
-                        event_id=fields.get("event_id", redis_id),
-                        timestamp=datetime.fromisoformat(fields["timestamp"]) if fields.get("timestamp") else datetime.utcnow(),
-                        source=fields.get("source", "unknown"),
-                        trace_id=fields.get("trace_id") or None,
-                    )
+                event = self._deserialize_event(redis_id, fields)
+                if event is not None:
+                    events.append(event)
+                    await client.xack(self._stream, self._consumer_group, redis_id)
+        return events
+
+    async def _reclaim_stale_messages(self, *, count: int) -> list[NovaEvent]:
+        client = self._client_or_raise()
+        try:
+            pending = await client.xpending_range(
+                self._stream,
+                self._consumer_group,
+                min="-",
+                max="+",
+                count=count,
+                idle=self._pending_min_idle_ms,
+            )
+        except Exception:
+            return []
+
+        if not pending:
+            return []
+
+        reclaim_ids: list[str] = []
+        events: list[NovaEvent] = []
+        for item in pending:
+            msg_id = item.get("message_id") or item.get("message_id".encode())
+            deliveries = item.get("times_delivered") or item.get("times_delivered".encode()) or 0
+            if not msg_id:
+                continue
+            if int(deliveries) > self._max_retries:
+                await self._move_to_dlq(msg_id)
+                continue
+            reclaim_ids.append(msg_id)
+
+        if not reclaim_ids:
+            return []
+
+        try:
+            claimed = await client.xclaim(
+                self._stream,
+                self._consumer_group,
+                self._consumer_name,
+                min_idle_time=self._pending_min_idle_ms,
+                message_ids=reclaim_ids,
+            )
+        except Exception:
+            return []
+
+        for redis_id, fields in claimed:
+            event = self._deserialize_event(redis_id, fields)
+            if event is not None:
                 events.append(event)
                 await client.xack(self._stream, self._consumer_group, redis_id)
         return events
+
+    async def _move_to_dlq(self, redis_id: str) -> None:
+        client = self._client_or_raise()
+        records = await client.xrange(self._stream, min=redis_id, max=redis_id, count=1)
+        if not records:
+            return
+        _, fields = records[0]
+        payload = dict(fields)
+        payload["original_stream"] = self._stream
+        payload["dead_lettered_at"] = datetime.utcnow().isoformat()
+        await client.xadd(self._dlq_stream, payload)
+        await client.xack(self._stream, self._consumer_group, redis_id)
+
+    def _deserialize_event(self, redis_id: str, fields: dict[str, Any]) -> NovaEvent | None:
+        try:
+            return NovaEvent(
+                type=EventType(fields["type"]),
+                payload=json.loads(fields.get("payload", "{}")),
+                priority=int(fields.get("priority", "2")),
+                event_id=fields.get("event_id", redis_id),
+                timestamp=datetime.fromisoformat(fields["timestamp"]) if fields.get("timestamp") else datetime.utcnow(),
+                source=fields.get("source", "unknown"),
+                trace_id=fields.get("trace_id") or None,
+            )
+        except Exception:
+            log.warning("Failed to deserialize event from stream id=%s", redis_id)
+            return None
 
 
 def create_event_transport_backend(config: dict[str, Any] | None = None) -> EventTransportBackend:
@@ -184,6 +269,10 @@ def create_event_transport_backend(config: dict[str, Any] | None = None) -> Even
         transport.configure_consumer(
             group=config.get("consumer_group", "nova-workers"),
             consumer=config.get("consumer_name", "nova-consumer-1"),
+            pending_min_idle_ms=config.get("pending_min_idle_ms", 30000),
+            reclaim_batch_size=config.get("reclaim_batch_size", 20),
+            max_retries=config.get("max_retries", 5),
+            dlq_stream=config.get("dlq_stream"),
         )
         return transport
     return InMemoryEventTransportBackend()

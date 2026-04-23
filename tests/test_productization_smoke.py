@@ -29,6 +29,7 @@ def test_example_json_config_matches_settings_schema() -> None:
     assert settings.runtime.session_id == "primary"
     assert settings.runtime.event_bus_mode == "local"
     assert settings.runtime.event_bus_backend == "memory"
+    assert settings.runtime.event_bus_max_retries == 5
     assert any(p.platform == "kuaishou" for p in settings.platforms)
     assert any(p.platform == "wechat" for p in settings.platforms)
 
