@@ -1,54 +1,49 @@
 @echo off
-REM NOVA Install Script (Windows)
-echo ═══════════════════════════════════
-echo   NOVA - Installation Script
-echo ═══════════════════════════════════
+setlocal
 
-REM Check Python
+echo == NOVA install (Windows) ==
+
 where python >nul 2>&1
 if %errorlevel% neq 0 (
-    echo Error: Python 3.11+ is required but not found.
-    echo Install it from: https://www.python.org/downloads/
-    pause
+    echo Error: Python 3.11+ is required.
     exit /b 1
 )
 
 python --version
 
-REM Create virtual environment
 if not exist ".venv" (
     echo Creating virtual environment...
     python -m venv .venv
 )
 
-REM Activate venv
 call .venv\Scripts\activate.bat
 
-REM Install dependencies
 echo Installing NOVA dependencies...
-pip install -e ".[dev]"
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 
-REM Copy config if not exists
 if not exist "nova.config.json" (
-    echo Creating default configuration...
-    copy nova.config.example.json nova.config.json
-    echo Created nova.config.json - edit it with your platform credentials.
+    copy nova.config.example.json nova.config.json >nul
+    echo Created nova.config.json
 )
 
-REM Copy .env if not exists
 if not exist ".env" (
-    copy .env.example .env
-    echo Created .env - edit it with your settings.
+    copy .env.example .env >nul
+    echo Created .env
+)
+
+echo Running startup smoke test...
+python -m pytest tests\test_api_smoke.py -q
+if %errorlevel% neq 0 (
+    echo Smoke test failed.
+    exit /b 1
 )
 
 echo.
-echo ═══════════════════════════════════
-echo   Installation Complete!
-echo ═══════════════════════════════════
-echo.
+echo Install complete.
 echo Next steps:
-echo   1. Start Ollama:     ollama pull qwen2.5:14b
-echo   2. Edit config:      notepad nova.config.json
-echo   3. Start NOVA:       python -m apps.nova_server.main
-echo.
-pause
+echo   1. ollama pull qwen2.5:14b
+echo   2. edit nova.config.json
+echo   3. python -m apps.nova_server.main
+echo   4. curl http://127.0.0.1:8765/health
+endlocal

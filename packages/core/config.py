@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -48,7 +48,12 @@ class VoiceConfig(BaseSettings):
     azure_api_key: SecretStr = SecretStr("")
     elevenlabs_api_key: SecretStr = SecretStr("")
     elevenlabs_voice_id: str = ""
-    gpt_sovits_url: str = "http://localhost:9880"
+    gpt_sovits_url: str = Field(
+        default="http://localhost:9880",
+        validation_alias=AliasChoices("gpt_sovits_url", "gptsovits_url"),
+    )
+    voices_dir: str = "voices"
+    speaker: str = "nova"
     fallback_chain: list[str] = Field(
         default_factory=lambda: ["edge_tts"]
     )
@@ -172,16 +177,43 @@ class ObservabilityConfig(BaseSettings):
     log_file: str | None = None
 
 
+class RuntimeConfig(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="NOVA_RUNTIME_")
+
+    role: Literal["all", "api", "perception", "cognitive", "generation"] = "all"
+    instance_name: str = "nova"
+    session_id: str = "primary"
+    hot_state_enabled: bool = True
+    hot_state_ttl_s: int = 300
+    hot_state_sync_interval_s: int = 5
+    idempotency_ttl_s: int = 600
+    event_bus_mode: Literal["local", "external_consumer"] = "local"
+    event_bus_backend: Literal["memory", "redis_streams"] = "memory"
+    event_bus_stream: str = "nova:events"
+    event_bus_consumer_group: str = "nova-workers"
+    event_bus_consumer_name: str = "nova-consumer-1"
+    event_bus_consumer_group: str = "nova-workers"
+    event_bus_consumer_name: str = "nova-consumer-1"
+
+
 class PlatformConfig(BaseSettings):
     """Single platform connection config."""
     model_config = SettingsConfigDict(env_prefix="NOVA_PLATFORM_")
 
     platform: str = "bilibili"
-    room_id: int = 0
+    room_id: int | str = 0
     token: SecretStr = SecretStr("")
     uid: int = 0
     app_id: str = ""
     app_secret: SecretStr = SecretStr("")
+    live_chat_id: str = ""
+    api_key: SecretStr = SecretStr("")
+    poll_interval: float = 3.0
+    channel: str = ""
+    oauth_token: SecretStr = SecretStr("")
+    username: str = "nova_bot"
+    webhook_port: int = 8766
+    mode: Literal["polling", "webhook"] = "polling"
 
 
 # ─── Top-level Settings ──────────────────────────────────────────────────────
@@ -222,6 +254,7 @@ class NovaSettings(BaseSettings):
     resilience: ResilienceConfig = Field(default_factory=ResilienceConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
     # Platforms (list — configured via JSON, not env vars)
     platforms: list[PlatformConfig] = Field(default_factory=list)
@@ -269,7 +302,7 @@ def _flatten_config(raw: dict[str, Any], prefix: str = "") -> dict[str, Any]:
         if isinstance(value, dict) and key in (
             "llm", "voice", "character", "knowledge", "nlu", "tools",
             "consolidation", "perception", "safety", "avatar",
-            "persistence", "resilience", "auth", "observability",
+            "persistence", "resilience", "auth", "observability", "runtime",
         ):
             result[key] = value
         else:

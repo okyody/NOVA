@@ -23,6 +23,8 @@ class Platform(str, Enum):
     YOUTUBE   = "youtube"
     TWITCH    = "twitch"
     TIKTOK    = "tiktok"
+    KUAISHOU  = "kuaishou"
+    WECHAT    = "wechat"
     LOCAL     = "local"
 
 

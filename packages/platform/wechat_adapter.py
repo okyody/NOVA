@@ -126,7 +126,7 @@ class WeChatAdapter(BaseAdapter):
         app_secret: str = "",
         mode: str = "polling",  # "polling" or "webhook"
     ) -> None:
-        super().__init__(bus, Platform.LOCAL)
+        super().__init__(bus, Platform.WECHAT)
         self._room_id = room_id
         self._app_id = app_id
         self._app_secret = app_secret

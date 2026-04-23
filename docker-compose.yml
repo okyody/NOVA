@@ -2,33 +2,129 @@ services:
   nova:
     build: .
     ports:
-      - "8765:8765"    # NOVA API
-      - "8767:8767"    # Avatar WebSocket
-      - "9090:9090"    # Prometheus metrics
+      - "8765:8765"
+      - "8767:8767"
     environment:
       NOVA_CONFIG: /app/nova.config.json
-      NOVA_LLM_URL: http://ollama:11434/v1
-      NOVA_LLM_MODEL: qwen2.5:14b
-      NOVA_KNOWLEDGE: "true"
-      NOVA_EMBEDDING_URL: http://ollama:11434
-      NOVA_EMBEDDING_MODEL: nomic-embed-text
-      NOVA_VECTOR_BACKEND: qdrant
-      NOVA_QDRANT_URL: http://qdrant:6333
+      NOVA_RUNTIME__ROLE: api
+      NOVA_RUNTIME__INSTANCE_NAME: nova-api
+      NOVA_RUNTIME__SESSION_ID: primary
+      NOVA_LLM__BASE_URL: http://ollama:11434/v1
+      NOVA_LLM__MODEL: qwen2.5:14b
+      NOVA_KNOWLEDGE__ENABLED: "false"
+      NOVA_PERSIST__ENABLED: "true"
+      NOVA_PERSIST__BACKEND: redis
+      NOVA_PERSIST__REDIS_URL: redis://redis:6379
+      NOVA_RUNTIME__HOT_STATE_ENABLED: "true"
+      NOVA_RUNTIME__EVENT_BUS_MODE: local
+      NOVA_RUNTIME__EVENT_BUS_BACKEND: memory
     volumes:
       - ./nova.config.json:/app/nova.config.json:ro
       - ./characters:/app/characters:ro
       - ./knowledge:/app/knowledge:ro
       - nova_state:/app/data/state
-      - nova_logs:/app/log
     depends_on:
-      - ollama
-      - qdrant
+      - redis
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
       interval: 30s
       timeout: 5s
       retries: 3
+
+  nova-perception:
+    build: .
+    command: ["python", "-m", "apps.nova_worker.main", "perception"]
+    environment:
+      NOVA_CONFIG: /app/nova.config.json
+      NOVA_RUNTIME__ROLE: perception
+      NOVA_RUNTIME__INSTANCE_NAME: nova-perception
+      NOVA_RUNTIME__SESSION_ID: primary
+      NOVA_RUNTIME__EVENT_BUS_MODE: external_consumer
+      NOVA_RUNTIME__EVENT_BUS_BACKEND: redis_streams
+      NOVA_RUNTIME__EVENT_BUS_STREAM: nova:events
+      NOVA_RUNTIME__EVENT_BUS_CONSUMER_GROUP: nova-perception
+      NOVA_RUNTIME__EVENT_BUS_CONSUMER_NAME: nova-perception-1
+      NOVA_PERSIST__ENABLED: "true"
+      NOVA_PERSIST__BACKEND: redis
+      NOVA_PERSIST__REDIS_URL: redis://redis:6379
+      NOVA_RUNTIME__HOT_STATE_ENABLED: "true"
+    volumes:
+      - ./nova.config.json:/app/nova.config.json:ro
+      - ./characters:/app/characters:ro
+      - ./knowledge:/app/knowledge:ro
+      - nova_state:/app/data/state
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  nova-cognitive:
+    build: .
+    command: ["python", "-m", "apps.nova_worker.main", "cognitive"]
+    environment:
+      NOVA_CONFIG: /app/nova.config.json
+      NOVA_RUNTIME__ROLE: cognitive
+      NOVA_RUNTIME__INSTANCE_NAME: nova-cognitive
+      NOVA_RUNTIME__SESSION_ID: primary
+      NOVA_RUNTIME__EVENT_BUS_MODE: external_consumer
+      NOVA_RUNTIME__EVENT_BUS_BACKEND: redis_streams
+      NOVA_RUNTIME__EVENT_BUS_STREAM: nova:events
+      NOVA_RUNTIME__EVENT_BUS_CONSUMER_GROUP: nova-cognitive
+      NOVA_RUNTIME__EVENT_BUS_CONSUMER_NAME: nova-cognitive-1
+      NOVA_LLM__BASE_URL: http://ollama:11434/v1
+      NOVA_LLM__MODEL: qwen2.5:14b
+      NOVA_KNOWLEDGE__ENABLED: "true"
+      NOVA_KNOWLEDGE__EMBEDDING_BACKEND: ollama
+      NOVA_KNOWLEDGE__EMBEDDING_BASE_URL: http://ollama:11434
+      NOVA_KNOWLEDGE__EMBEDDING_MODEL: nomic-embed-text
+      NOVA_KNOWLEDGE__VECTOR_BACKEND: qdrant
+      NOVA_KNOWLEDGE__QDRANT_URL: http://qdrant:6333
+      NOVA_PERSIST__ENABLED: "true"
+      NOVA_PERSIST__BACKEND: redis
+      NOVA_PERSIST__REDIS_URL: redis://redis:6379
+      NOVA_RUNTIME__HOT_STATE_ENABLED: "true"
+    volumes:
+      - ./nova.config.json:/app/nova.config.json:ro
+      - ./characters:/app/characters:ro
+      - ./knowledge:/app/knowledge:ro
+      - nova_state:/app/data/state
+    depends_on:
+      - redis
+      - ollama
+      - qdrant
+    restart: unless-stopped
+
+  nova-generation:
+    build: .
+    command: ["python", "-m", "apps.nova_worker.main", "generation"]
+    environment:
+      NOVA_CONFIG: /app/nova.config.json
+      NOVA_RUNTIME__ROLE: generation
+      NOVA_RUNTIME__INSTANCE_NAME: nova-generation
+      NOVA_RUNTIME__SESSION_ID: primary
+      NOVA_RUNTIME__EVENT_BUS_MODE: external_consumer
+      NOVA_RUNTIME__EVENT_BUS_BACKEND: redis_streams
+      NOVA_RUNTIME__EVENT_BUS_STREAM: nova:events
+      NOVA_RUNTIME__EVENT_BUS_CONSUMER_GROUP: nova-generation
+      NOVA_RUNTIME__EVENT_BUS_CONSUMER_NAME: nova-generation-1
+      NOVA_PERSIST__ENABLED: "true"
+      NOVA_PERSIST__BACKEND: redis
+      NOVA_PERSIST__REDIS_URL: redis://redis:6379
+      NOVA_RUNTIME__HOT_STATE_ENABLED: "true"
+    volumes:
+      - ./nova.config.json:/app/nova.config.json:ro
+      - ./characters:/app/characters:ro
+      - ./knowledge:/app/knowledge:ro
+      - nova_state:/app/data/state
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
 
   ollama:
     image: ollama/ollama:latest
@@ -60,14 +156,14 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./infrastructure/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./deploy/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
 
   prometheus:
     image: prom/prometheus:latest
     ports:
       - "9091:9090"
     volumes:
-      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
 
 volumes:
@@ -76,4 +172,3 @@ volumes:
   grafana_data:
   prometheus_data:
   nova_state:
-  nova_logs:

@@ -59,11 +59,22 @@ jobs:
             --cov-report=xml \
             --cov-report=term-missing \
             --cov-fail-under=60
+      - name: App import smoke
+        run: python -c "import apps.nova_server.main; print('import_ok')"
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         if: matrix.python-version == '3.11'
         with:
           file: ./coverage.xml
+
+  smoke-compose:
+    name: Compose Smoke
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run docker compose startup smoke
+        run: python deploy/tools/compose_smoke.py --timeout 120
 
   # ─── Security Scan ────────────────────────────────────────────────────────
   security:
@@ -88,7 +99,7 @@ jobs:
   build:
     name: Build & Push Docker
     runs-on: ubuntu-latest
-    needs: [test, security]
+    needs: [test, security, smoke-compose]
     permissions:
       contents: read
       packages: write

@@ -6,7 +6,7 @@ Run: pytest tests/ -v --asyncio-mode=auto
 import asyncio
 import pytest
 
-from packages.core.event_bus import EventBus
+from packages.core.event_bus import EventBus, InMemoryEventTransportBackend, create_event_transport_backend
 from packages.core.types import (
     EmotionLabel,
     EventType,
@@ -94,6 +94,70 @@ async def test_event_bus_dlq():
     dlq = bus.dlq_drain()
     assert len(dlq) == 1
     assert dlq[0].type == EventType.HEALTH_CHECK
+    await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_event_bus_ingress_idempotency():
+    class _IdemBackend:
+        def __init__(self):
+            self._seen = set()
+
+        async def set_if_absent_json(self, key, value, ttl=None):
+            if key in self._seen:
+                return False
+            self._seen.add(key)
+            return True
+
+    bus = EventBus(
+        ingress_idempotency_backend=_IdemBackend(),
+        ingress_idempotency_namespace="test",
+        ingress_idempotency_ttl_s=60,
+    )
+    await bus.start()
+
+    received = []
+
+    async def handler(event: NovaEvent):
+        received.append(event)
+
+    bus.subscribe(EventType.CHAT_MESSAGE, handler, sub_id="ingress_idem")
+    event = NovaEvent(type=EventType.CHAT_MESSAGE, payload={"text": "hello"}, source="bilibili")
+    accepted_1 = await bus.publish_ingress(event)
+    accepted_2 = await bus.publish_ingress(event)
+    await asyncio.sleep(0.05)
+
+    assert accepted_1 is True
+    assert accepted_2 is False
+    assert len(received) == 1
+    assert bus.stats().get("duplicates", 0) == 1
+    await bus.stop()
+
+
+def test_create_event_transport_backend_defaults_to_memory():
+    backend = create_event_transport_backend({"backend": "memory"})
+    assert isinstance(backend, InMemoryEventTransportBackend)
+
+
+@pytest.mark.asyncio
+async def test_event_bus_external_consumer_mode_dispatches_from_transport():
+    bus = EventBus(
+        transport_backend=InMemoryEventTransportBackend(),
+        mode="external_consumer",
+    )
+    await bus.start()
+
+    received = []
+
+    async def handler(event: NovaEvent):
+        received.append(event)
+
+    bus.subscribe(EventType.CHAT_MESSAGE, handler, sub_id="external_consumer")
+    await bus.publish(NovaEvent(type=EventType.CHAT_MESSAGE, payload={"text": "hello external"}))
+    await asyncio.sleep(0.1)
+
+    assert len(received) == 1
+    assert received[0].payload["text"] == "hello external"
     await bus.stop()
 
 

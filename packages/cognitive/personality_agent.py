@@ -134,14 +134,16 @@ class PersonalityAgent:
         self._baseline_task = asyncio.create_task(
             self._baseline_loop(), name="nova.personality_baseline"
         )
+        await self._publish_hint()
+        log.info("Personality agent started as '%s'", self.character.name)
 
     async def stop(self) -> None:
         if hasattr(self, "_baseline_task") and self._baseline_task:
             self._baseline_task.cancel()
-
-        # Publish initial character state
-        await self._publish_hint()
-        log.info("Personality agent started as '%s'", self.character.name)
+            try:
+                await self._baseline_task
+            except asyncio.CancelledError:
+                pass
 
     # ── Intercept & correct LLM decisions ────────────────────────────────────
 

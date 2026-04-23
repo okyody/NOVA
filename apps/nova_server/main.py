@@ -50,7 +50,7 @@ from packages.core.logger import setup_logging, get_logger, bind_trace_id
 from packages.core.config import NovaSettings, load_settings
 
 # ── Component imports ─────────────────────────────────────────────────────────
-from packages.core.event_bus import EventBus
+from packages.core.event_bus import EventBus, create_event_transport_backend
 from packages.core.types import Platform
 from packages.perception.semantic_aggregator import SemanticAggregator
 from packages.perception.silence_detector import SilenceDetector
@@ -75,7 +75,8 @@ from packages.ops.circuit_breaker         import CircuitBreaker, FallbackRespond
 from packages.ops.health_monitor          import HealthMonitor, SimpleHealthCheck
 from packages.ops.metrics                 import MetricsCollector, metrics as global_metrics
 from packages.ops.security_middleware     import setup_security_middleware, InputValidator
-from ops.tracing                          import setup_tracing
+from packages.ops.hot_state               import HotStateSync, RuntimeSessionState, RuntimeStateProjector, create_hot_state_backend
+from packages.ops.tracing                 import setup_tracing
 from packages.cognitive.state_persistence import StateManager, create_persistence_backend
 from packages.platform.manager            import PlatformManager
 
@@ -114,6 +115,10 @@ class NovaApp:
         self.state_mgr:          StateManager | None           = None
         self.metrics:            MetricsCollector              = global_metrics
         self.jwt_auth:           Any | None                    = None
+        self.hot_state:          HotStateSync | None           = None
+        self.hot_projector:      RuntimeStateProjector | None  = None
+        self.hot_session:        RuntimeSessionState | None    = None
+        self._hot_session_started: bool                         = False
         # Generation
         self.voice:              VoicePipeline | None          = None
         self.lipsync:            LipSyncEngine | None          = None
@@ -126,30 +131,63 @@ class NovaApp:
     async def startup(self) -> None:
         cfg = self.settings
         log = get_logger("nova.server")
+        runtime_cfg = cfg.runtime
+        role = runtime_cfg.role
+        run_bus = role in {"all", "perception", "cognitive", "generation"}
+        run_perception = role in {"all", "perception"}
+        run_cognitive = role in {"all", "cognitive"}
+        run_generation = role in {"all", "generation"}
+        run_platform_ingress = role in {"all", "perception"}
 
         log.info("═══════════════════════════════════")
         log.info("  NOVA — Next-gen Omnimodal Virtual Agent")
         log.info("  Version 2.0 Enterprise")
         log.info("═══════════════════════════════════")
 
+        ingress_backend = None
+        if cfg.persistence.backend == "redis" and runtime_cfg.hot_state_enabled:
+            ingress_backend = create_hot_state_backend({
+                "backend": "redis",
+                "url": cfg.persistence.redis_url,
+                "db": cfg.persistence.redis_db,
+            })
+
+        transport_backend = create_event_transport_backend({
+            "backend": runtime_cfg.event_bus_backend,
+            "url": cfg.persistence.redis_url,
+            "db": cfg.persistence.redis_db,
+            "stream": runtime_cfg.event_bus_stream,
+            "consumer_group": runtime_cfg.event_bus_consumer_group,
+            "consumer_name": runtime_cfg.event_bus_consumer_name,
+        })
+
         # 1. Event bus
-        self.bus = EventBus(queue_size=8192)
-        await self.bus.start()
+        if run_bus:
+            self.bus = EventBus(
+                queue_size=8192,
+                transport_backend=transport_backend,
+                ingress_idempotency_backend=ingress_backend,
+                ingress_idempotency_namespace=runtime_cfg.instance_name,
+                ingress_idempotency_ttl_s=runtime_cfg.idempotency_ttl_s,
+                mode=runtime_cfg.event_bus_mode,
+            )
+            await self.bus.start()
 
         # 2. Perception layer
         perc = cfg.perception
-        self.aggregator = SemanticAggregator(self.bus, window_ms=perc.aggregator_window_ms)
-        await self.aggregator.start()
+        if run_perception and self.bus:
+            self.aggregator = SemanticAggregator(self.bus, window_ms=perc.aggregator_window_ms)
+            await self.aggregator.start()
 
-        self.silence = SilenceDetector(self.bus, threshold_s=perc.silence_threshold_s)
-        await self.silence.start()
+            self.silence = SilenceDetector(self.bus, silence_sec=perc.silence_threshold_s)
+            await self.silence.start()
 
-        self.context = ContextSensor(self.bus, update_interval_s=perc.context_update_s)
-        await self.context.start()
+            self.context = ContextSensor(self.bus, update_interval_s=perc.context_update_s)
+            await self.context.start()
 
         # 3. Knowledge layer (optional — RAG)
         kb = cfg.knowledge
-        if kb.enabled:
+        if run_cognitive and kb.enabled:
             self.embedder = create_embedder({
                 "backend": kb.embedding_backend,
                 "base_url": kb.embedding_base_url,
@@ -187,30 +225,31 @@ class NovaApp:
                         log.info("Loaded knowledge from %s (%d docs)", f.name, len(docs))
                     except Exception as e:
                         log.error("Failed to load knowledge %s: %s", f.name, e)
-        else:
+        elif run_cognitive:
             log.info("Knowledge base disabled (set NOVA_KNOWLEDGE__ENABLED=true)")
 
         # 4-6. Cognitive agents
-        self.memory = MemoryAgent(self.bus)
-        await self.memory.start()
+        if run_cognitive and self.bus:
+            self.memory = MemoryAgent(self.bus)
+            await self.memory.start()
 
-        self.emotion = EmotionAgent(self.bus)
-        await self.emotion.start()
+            self.emotion = EmotionAgent(self.bus)
+            await self.emotion.start()
 
-        char_path = cfg.character.path
-        self.personality = PersonalityAgent(
-            self.bus,
-            character_path=Path(char_path) if char_path else None,
-        )
-        await self.personality.start()
+            char_path = cfg.character.path
+            self.personality = PersonalityAgent(
+                self.bus,
+                character_path=Path(char_path) if char_path else None,
+            )
+            await self.personality.start()
 
         # 7. NLU Intent Classifier
-        if cfg.nlu.enabled:
+        if run_cognitive and cfg.nlu.enabled:
             self.nlu = IntentClassifier(llm_client=None)
             log.info("NLU intent classifier initialized")
 
         # 8. Tool Registry
-        if cfg.tools.enabled:
+        if run_cognitive and cfg.tools.enabled:
             self.tool_registry = ToolRegistry()
             builtin_tools = create_builtin_tools(
                 knowledge_base=self.knowledge_base,
@@ -223,114 +262,145 @@ class NovaApp:
             log.info("Tool registry initialized (%d tools)", len(self.tool_registry.list_names()))
 
         # 9. Proactive Intelligence
-        self.proactive = ProactiveIntelligence(
-            bus=self.bus,
-            knowledge_base=self.knowledge_base,
-        )
+        if run_cognitive and self.bus:
+            self.proactive = ProactiveIntelligence(
+                bus=self.bus,
+                knowledge_base=self.knowledge_base,
+            )
 
         # Memory Consolidator
-        if cfg.consolidation.enabled:
+        if run_cognitive and cfg.consolidation.enabled:
             self.consolidator = MemoryConsolidator(llm_client=None)
 
         # 10. Orchestrator (with Circuit Breaker + Metrics)
         llm_cfg = cfg.llm
-        self._llm = LLMClient(
-            base_url=llm_cfg.base_url,
-            api_key=llm_cfg.api_key.get_secret_value(),
-            model=llm_cfg.model,
-            timeout=llm_cfg.timeout,
-        )
-
         res = cfg.resilience
-        if res.circuit_breaker_enabled:
-            self.circuit_breaker = CircuitBreaker(
-                name="llm",
-                failure_threshold=res.circuit_breaker_threshold,
-                recovery_timeout=res.circuit_breaker_recovery_s,
+        if run_cognitive and self.bus:
+            self._llm = LLMClient(
+                base_url=llm_cfg.base_url,
+                api_key=llm_cfg.api_key.get_secret_value(),
+                model=llm_cfg.model,
+                timeout=llm_cfg.timeout,
             )
-            self.fallback = FallbackResponder(
-                character=self.personality.character if self.personality else None
+
+            if res.circuit_breaker_enabled:
+                self.circuit_breaker = CircuitBreaker(
+                    name="llm",
+                    failure_threshold=res.circuit_breaker_threshold,
+                    recovery_timeout=res.circuit_breaker_recovery_s,
+                )
+                self.fallback = FallbackResponder(
+                    character=self.personality.character if self.personality else None
+                )
+                log.info("Circuit breaker enabled (threshold=%d, recovery=%.0fs)",
+                         res.circuit_breaker_threshold, res.circuit_breaker_recovery_s)
+
+            self.orchestrator = Orchestrator(
+                bus=self.bus,
+                llm=self._llm,
+                memory_agent=self.memory,
+                emotion_agent=self.emotion,
+                personality_agent=self.personality,
+                knowledge_base=self.knowledge_base,
+                tool_registry=self.tool_registry,
+                nlu=self.nlu,
+                circuit_breaker=self.circuit_breaker,
+                fallback_responder=self.fallback,
+                metrics=self.metrics,
             )
-            log.info("Circuit breaker enabled (threshold=%d, recovery=%.0fs)",
-                     res.circuit_breaker_threshold, res.circuit_breaker_recovery_s)
+            await self.orchestrator.start()
 
-        self.orchestrator = Orchestrator(
-            bus=self.bus,
-            llm=self._llm,
-            memory_agent=self.memory,
-            emotion_agent=self.emotion,
-            personality_agent=self.personality,
-            knowledge_base=self.knowledge_base,
-            tool_registry=self.tool_registry,
-            nlu=self.nlu,
-            circuit_breaker=self.circuit_breaker,
-            fallback_responder=self.fallback,
-            metrics=self.metrics,
-        )
-        await self.orchestrator.start()
-
-        # 11. Safety guard
-        self.safety = SafetyGuard(self.bus)
-        await self.safety.start()
+            # 11. Safety guard
+            self.safety = SafetyGuard(self.bus)
+            await self.safety.start()
 
         # 12. Voice pipeline
         voice_cfg = cfg.voice
-        tts_backend = create_tts_backend({
-            "backend": voice_cfg.backend,
-            "voice_id": voice_cfg.voice_id,
-        })
-        self.voice = VoicePipeline(
-            self.bus,
-            backend=tts_backend,
-            voice_id=voice_cfg.voice_id,
-        )
-        await self.voice.start()
+        if run_generation and self.bus:
+            tts_backend = create_tts_backend({
+                "backend": voice_cfg.backend,
+                "voice_id": voice_cfg.voice_id,
+                "cosyvoice2_url": voice_cfg.cosyvoice2_url,
+                "gptsovits_url": voice_cfg.gpt_sovits_url,
+                "voices_dir": voice_cfg.voices_dir,
+                "speaker": voice_cfg.speaker,
+                "azure_key": voice_cfg.azure_api_key.get_secret_value(),
+                "azure_region": voice_cfg.azure_region,
+                "elevenlabs_key": voice_cfg.elevenlabs_api_key.get_secret_value(),
+                "elevenlabs_voice": voice_cfg.elevenlabs_voice_id,
+                "chain_order": voice_cfg.fallback_chain,
+            })
+            self.voice = VoicePipeline(
+                self.bus,
+                backend=tts_backend,
+                voice_id=voice_cfg.voice_id,
+            )
+            await self.voice.start()
 
-        # LipSync
-        self.lipsync = LipSyncEngine(self.bus)
-        await self.lipsync.start()
+            # LipSync
+            self.lipsync = LipSyncEngine(self.bus)
+            await self.lipsync.start()
 
-        # 13. Avatar driver
-        avatar_cfg = cfg.avatar
-        if avatar_cfg.enabled:
-            self.avatar = AvatarDriver(self.bus, ws_port=avatar_cfg.ws_port)
-            await self.avatar.start()
+            # 13. Avatar driver
+            avatar_cfg = cfg.avatar
+            if avatar_cfg.enabled:
+                self.avatar = AvatarDriver(self.bus, ws_port=avatar_cfg.ws_port)
+                await self.avatar.start()
 
         # 14. Platform manager
-        self.platform_mgr = PlatformManager(self.bus)
-        platforms_list = [
-            {
-                "platform": p.platform,
-                "room_id": p.room_id,
-                "token": p.token.get_secret_value() if p.token.get_secret_value() else "",
-                "uid": p.uid,
-                "app_id": p.app_id,
-                "app_secret": p.app_secret.get_secret_value() if p.app_secret.get_secret_value() else "",
-            }
-            for p in cfg.platforms
-        ]
-        await self.platform_mgr.start(platforms_list)
+        if run_platform_ingress and self.bus:
+            self.platform_mgr = PlatformManager(self.bus)
+            platforms_list = [
+                {
+                    "platform": p.platform,
+                    "room_id": p.room_id,
+                    "token": p.token.get_secret_value() if p.token.get_secret_value() else "",
+                    "uid": p.uid,
+                    "app_id": p.app_id,
+                    "app_secret": p.app_secret.get_secret_value() if p.app_secret.get_secret_value() else "",
+                    "live_chat_id": p.live_chat_id,
+                    "api_key": p.api_key.get_secret_value() if p.api_key.get_secret_value() else "",
+                    "poll_interval": p.poll_interval,
+                    "channel": p.channel,
+                    "oauth_token": p.oauth_token.get_secret_value() if p.oauth_token.get_secret_value() else "",
+                    "username": p.username,
+                    "webhook_port": p.webhook_port,
+                    "mode": p.mode,
+                }
+                for p in cfg.platforms
+            ]
+            await self.platform_mgr.start(platforms_list)
 
         # 15. Health monitor
-        self.health_monitor = HealthMonitor(self.bus, check_interval_s=res.health_check_interval_s)
-        await self.health_monitor.start()
-        self.health_monitor.register_check(
-            "event_bus", lambda: SimpleHealthCheck.from_condition("event_bus", self.bus is not None)
-        )
-        self.health_monitor.register_check(
-            "safety", lambda: SimpleHealthCheck.from_condition("safety", self.safety is not None)
-        )
-        self.health_monitor.register_check(
-            "orchestrator", lambda: SimpleHealthCheck.from_condition("orchestrator", self.orchestrator is not None)
-        )
-        self.health_monitor.register_check(
-            "knowledge_base", lambda: SimpleHealthCheck.from_condition("knowledge_base", self.knowledge_base is not None)
-        )
-        log.info("Health monitor started (interval=%ds)", res.health_check_interval_s)
+        if run_bus and self.bus:
+            self.health_monitor = HealthMonitor(self.bus, check_interval_s=res.health_check_interval_s)
+            await self.health_monitor.start()
+
+        async def _check_event_bus():
+            return SimpleHealthCheck.from_condition("event_bus", self.bus is not None)
+
+        async def _check_safety():
+            return SimpleHealthCheck.from_condition("safety", self.safety is not None)
+
+        async def _check_orchestrator():
+            return SimpleHealthCheck.from_condition("orchestrator", self.orchestrator is not None)
+
+        async def _check_knowledge_base():
+            return SimpleHealthCheck.from_condition(
+                "knowledge_base",
+                (not cfg.knowledge.enabled) or self.knowledge_base is not None,
+            )
+
+        if self.health_monitor:
+            self.health_monitor.register_check("event_bus", _check_event_bus)
+            self.health_monitor.register_check("safety", _check_safety)
+            self.health_monitor.register_check("orchestrator", _check_orchestrator)
+            self.health_monitor.register_check("knowledge_base", _check_knowledge_base)
+            log.info("Health monitor started (interval=%ds)", res.health_check_interval_s)
 
         # 16. State persistence
         persist = cfg.persistence
-        if persist.enabled:
+        if persist.enabled and run_cognitive:
             backend = create_persistence_backend({
                 "backend": persist.backend,
                 "base_dir": persist.base_dir,
@@ -350,6 +420,77 @@ class NovaApp:
                 if restored:
                     log.info("Restored emotion state from persistence")
 
+        if persist.backend == "redis" and runtime_cfg.hot_state_enabled:
+            hot_backend = ingress_backend or create_hot_state_backend({
+                "backend": "redis",
+                "url": persist.redis_url,
+                "db": persist.redis_db,
+            })
+            self.hot_state = HotStateSync(
+                hot_backend,
+                interval_s=runtime_cfg.hot_state_sync_interval_s,
+                ttl_s=min(runtime_cfg.hot_state_ttl_s, 60),
+                runtime_name=runtime_cfg.instance_name,
+            )
+            self.hot_state.bind(
+                runtime=lambda: {
+                    "started_at": time.time(),
+                    "queue_depth": self.bus.stats().get("queue_depth", 0) if self.bus else 0,
+                    "tools_enabled": bool(self.tool_registry),
+                    "knowledge_enabled": self.knowledge_base is not None,
+                },
+                context=lambda: {
+                    "heat_level": self.context.current_context.heat_level.value if self.context else "normal",
+                    "chat_rate": self.context.current_context.chat_rate if self.context else 0.0,
+                    "gift_rate": self.context.current_context.gift_rate if self.context else 0.0,
+                    "viewer_count": self.context.current_context.viewer_count if self.context else 0,
+                },
+                emotion=lambda: {
+                    "label": self.emotion.current_state.label.value if self.emotion else "neutral",
+                    "valence": self.emotion.current_state.valence if self.emotion else 0.0,
+                    "arousal": self.emotion.current_state.arousal if self.emotion else 0.0,
+                    "intensity": self.emotion.current_state.intensity if self.emotion else 0.0,
+                },
+                platforms=lambda: self.platform_mgr.get_status() if self.platform_mgr else {},
+            )
+            await self.hot_state.start()
+            self.hot_projector = RuntimeStateProjector(
+                hot_backend,
+                runtime_name=runtime_cfg.instance_name,
+                ttl_s=runtime_cfg.hot_state_ttl_s,
+            )
+            self.hot_session = RuntimeSessionState(
+                hot_backend,
+                runtime_name=runtime_cfg.instance_name,
+                session_id=runtime_cfg.session_id,
+                ttl_s=runtime_cfg.hot_state_ttl_s,
+                idempotency_ttl_s=runtime_cfg.idempotency_ttl_s,
+            )
+            if run_bus:
+                await self.hot_session.mark_session_started({
+                    "character": self.personality.character_name if self.personality else "Nova",
+                    "llm_model": self._llm.model if self._llm else "",
+                    "role": role,
+                })
+                self._hot_session_started = True
+
+            async def _project_hot_state(event):
+                if self.hot_projector:
+                    await self.hot_projector.project_event(event.type.value, event.payload)
+                if self.hot_session:
+                    await self.hot_session.project_event(event.event_id, event.type.value, event.payload)
+
+            if self.bus:
+                for et in (
+                    EventType.CHAT_MESSAGE,
+                    EventType.GIFT_RECEIVED,
+                    EventType.SUPER_CHAT,
+                    EventType.FOLLOW,
+                    EventType.VIEWER_JOIN,
+                    EventType.SAFE_OUTPUT,
+                ):
+                    self.bus.subscribe(et, _project_hot_state, sub_id=f"hot_state_{et.name.lower()}")
+
         log.info(
             "NOVA started. Character: %s | LLM: %s | KB: %s | NLU: %s | Tools: %s | "
             "Auth: %s | Trace: %s | Platforms: %d | Avatar: %s",
@@ -360,7 +501,7 @@ class NovaApp:
             ",".join(self.tool_registry.list_names()) if self.tool_registry else "OFF",
             "ON" if cfg.auth.enabled else "OFF",
             "ON" if cfg.observability.tracing_enabled else "OFF",
-            len(self.platform_mgr._adapters),
+            len(self.platform_mgr._adapters) if self.platform_mgr else 0,
             "ON" if self.avatar else "OFF",
         )
 
@@ -392,6 +533,10 @@ class NovaApp:
         # Close knowledge resources
         if self.embedder and hasattr(self.embedder, "close"):
             await self.embedder.close()
+        if self.hot_session and self._hot_session_started:
+            await self.hot_session.mark_session_stopped()
+        if self.hot_state:
+            await self.hot_state.stop()
         if self.state_mgr:
             await self.state_mgr.stop()
         if self.bus:
@@ -401,77 +546,76 @@ class NovaApp:
 
 # ── FastAPI application ───────────────────────────────────────────────────────
 
-# Load settings early
-settings = load_settings()
-
-# Setup logging
-setup_logging(
-    level=settings.observability.log_level,
-    json_output=settings.observability.log_json,
-    log_file=settings.observability.log_file,
-)
 log = get_logger("nova.server")
 
-# Setup tracing
-setup_tracing(
-    service_name=settings.observability.tracing_service_name,
-    endpoint=settings.observability.tracing_endpoint,
-    enabled=settings.observability.tracing_enabled,
-)
+
+def create_app(settings_override: NovaSettings | None = None) -> FastAPI:
+    settings = settings_override or load_settings()
+
+    setup_logging(
+        level=settings.observability.log_level,
+        json_output=settings.observability.log_json,
+        log_file=settings.observability.log_file,
+    )
+
+    setup_tracing(
+        service_name=settings.observability.tracing_service_name,
+        endpoint=settings.observability.tracing_endpoint,
+        enabled=settings.observability.tracing_enabled,
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        nova = app.state.nova
+        loop = asyncio.get_running_loop()
+
+        def _signal_handler():
+            log.info("Received shutdown signal")
+            asyncio.create_task(nova.shutdown())
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, _signal_handler)
+            except NotImplementedError:
+                pass
+
+        await nova.startup()
+        yield
+        await nova.shutdown()
+
+    app = FastAPI(
+        title="NOVA Server",
+        version="2.0.0",
+        lifespan=lifespan,
+        docs_url="/docs" if settings.debug else None,
+        redoc_url="/redoc" if settings.debug else None,
+    )
+
+    app.state.nova = NovaApp(settings)
+
+    jwt_auth = setup_security_middleware(
+        app,
+        auth_enabled=settings.auth.enabled,
+        jwt_secret=settings.auth.jwt_secret.get_secret_value(),
+        jwt_expire_minutes=settings.auth.jwt_expire_minutes,
+        api_keys={settings.auth.api_key.get_secret_value()} if settings.auth.api_key.get_secret_value() else None,
+        allowed_origins=settings.auth.allowed_origins,
+    )
+    app.state.nova.jwt_auth = jwt_auth
+
+    from apps.nova_studio.routes import router as studio_router
+    app.include_router(studio_router)
+    return app
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    nova = app.state.nova
-    loop = asyncio.get_running_loop()
-
-    def _signal_handler():
-        log.info("Received shutdown signal")
-        asyncio.create_task(nova.shutdown())
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            loop.add_signal_handler(sig, _signal_handler)
-        except NotImplementedError:
-            pass
-
-    await nova.startup()
-    yield
-    await nova.shutdown()
-
-
-app = FastAPI(
-    title="NOVA Server",
-    version="2.0.0",
-    lifespan=lifespan,
-    docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None,
-)
-
-# Initialize app state
-app.state.nova = NovaApp(settings)
-
-# Setup security middleware
-jwt_auth = setup_security_middleware(
-    app,
-    auth_enabled=settings.auth.enabled,
-    jwt_secret=settings.auth.jwt_secret.get_secret_value(),
-    jwt_expire_minutes=settings.auth.jwt_expire_minutes,
-    api_keys={settings.auth.api_key.get_secret_value()} if settings.auth.api_key.get_secret_value() else None,
-    allowed_origins=settings.auth.allowed_origins,
-)
-app.state.nova.jwt_auth = jwt_auth
-
-# Mount Studio UI
-from apps.nova_studio.routes import router as studio_router
-app.include_router(studio_router)
+app = create_app()
 
 
 # ── API Endpoints ─────────────────────────────────────────────────────────────
 
 @app.get("/health")
-async def health():
-    nova = app.state.nova
+async def health(request: Request):
+    nova = request.app.state.nova
     bus_stats = nova.bus.stats() if nova.bus else {}
     safety_stats = nova.safety.stats() if nova.safety else {}
     platform_status = nova.platform_mgr.get_status() if nova.platform_mgr else {}
@@ -495,8 +639,9 @@ async def health():
         "tools": nova.tool_registry.list_names() if nova.tool_registry else [],
         "circuit_breaker": nova.circuit_breaker.stats() if nova.circuit_breaker else {},
         "state_persistence": nova.state_mgr is not None,
-        "auth": {"enabled": settings.auth.enabled},
-        "tracing": {"enabled": settings.observability.tracing_enabled},
+        "hot_state": nova.hot_state is not None,
+        "auth": {"enabled": nova.settings.auth.enabled},
+        "tracing": {"enabled": nova.settings.observability.tracing_enabled},
         "context": {
             "heat_level": context.heat_level.value,
             "chat_rate": context.chat_rate,
@@ -505,9 +650,9 @@ async def health():
 
 
 @app.get("/metrics")
-async def metrics():
+async def metrics(request: Request):
     """Prometheus-compatible plaintext metrics."""
-    nova = app.state.nova
+    nova = request.app.state.nova
     content, content_type = nova.metrics.generate_metrics()
     if content:
         return PlainTextResponse(content, media_type=content_type)
@@ -529,9 +674,9 @@ async def metrics():
 
 
 @app.post("/api/config/reload")
-async def reload_config():
+async def reload_config(request: Request):
     """Hot-reload character card without restarting the server."""
-    nova = app.state.nova
+    nova = request.app.state.nova
     if nova.personality:
         from packages.cognitive.personality_agent import CharacterCard
         char_path = nova.settings.character.path
@@ -562,9 +707,9 @@ async def ingest_knowledge(request: Request):
 
 
 @app.get("/api/knowledge/stats")
-async def knowledge_stats():
+async def knowledge_stats(request: Request):
     """Get knowledge base statistics."""
-    nova = app.state.nova
+    nova = request.app.state.nova
     if not nova.knowledge_base:
         return JSONResponse({"status": "knowledge base not enabled"}, status_code=400)
     sources = nova.knowledge_base.list_sources()
@@ -572,10 +717,79 @@ async def knowledge_stats():
     return {"total_documents": count, "sources": sources}
 
 
+@app.get("/api/runtime/hot-state")
+async def runtime_hot_state(request: Request):
+    nova = request.app.state.nova
+    if not nova.hot_projector:
+        return JSONResponse({"status": "hot state not enabled"}, status_code=400)
+
+    summary = await nova.hot_session.get_session() or {}
+    viewers = await nova.hot_session.list_viewers()
+    return {
+        "status": "ok",
+        "instance_name": nova.settings.runtime.instance_name,
+        "session_id": nova.settings.runtime.session_id,
+        "summary": summary,
+        "viewer_count": len(viewers),
+    }
+
+
+@app.get("/api/runtime/sessions")
+async def runtime_sessions(request: Request):
+    nova = request.app.state.nova
+    if not nova.hot_session:
+        return JSONResponse({"status": "hot session state not enabled"}, status_code=400)
+
+    all_instances = request.query_params.get("scope", "") == "all"
+    sessions = await nova.hot_session.list_sessions(all_instances=all_instances)
+    return {
+        "status": "ok",
+        "instance_name": nova.settings.runtime.instance_name,
+        "sessions": list(sessions.values()),
+    }
+
+
+@app.get("/api/runtime/sessions/{session_id}")
+async def runtime_session_detail(session_id: str, request: Request):
+    nova = request.app.state.nova
+    if not nova.hot_session:
+        return JSONResponse({"status": "hot session state not enabled"}, status_code=400)
+    session = await nova.hot_session.get_session(session_id)
+    if session is None:
+        return JSONResponse({"status": "session not found"}, status_code=404)
+    return {"status": "ok", "session": session}
+
+
+@app.get("/api/runtime/viewers")
+async def runtime_viewers(request: Request):
+    nova = request.app.state.nova
+    if not nova.hot_session:
+        return JSONResponse({"status": "hot session state not enabled"}, status_code=400)
+
+    viewers = await nova.hot_session.list_viewers()
+    return {
+        "status": "ok",
+        "count": len(viewers),
+        "viewers": list(viewers.values()),
+    }
+
+
+@app.get("/api/runtime/hot-state/viewers/{viewer_id}")
+async def runtime_hot_state_viewer(viewer_id: str, request: Request):
+    nova = request.app.state.nova
+    if not nova.hot_session:
+        return JSONResponse({"status": "hot state not enabled"}, status_code=400)
+
+    viewer = await nova.hot_session.get_viewer(viewer_id)
+    if viewer is None:
+        return JSONResponse({"status": "viewer not found"}, status_code=404)
+    return {"status": "ok", "viewer": viewer}
+
+
 @app.post("/api/auth/token")
 async def create_token(request: Request):
     """Create a JWT token (when auth is enabled)."""
-    nova = app.state.nova
+    nova = request.app.state.nova
     if not nova.jwt_auth:
         return JSONResponse({"status": "auth not enabled"}, status_code=400)
 
@@ -603,7 +817,7 @@ async def control_ws(websocket: WebSocket):
         except Exception:
             pass
 
-    nova = app.state.nova
+    nova = websocket.app.state.nova
     if nova.bus:
         nova.bus.subscribe("cognitive.*", forward_events, sub_id="ws_monitor_cognitive")
         nova.bus.subscribe("perception.*", forward_events, sub_id="ws_monitor_perception")
@@ -623,9 +837,27 @@ async def control_ws(websocket: WebSocket):
             nova.bus.unsubscribe("cognitive.*", "ws_monitor_cognitive")
 
 
+def attach_runtime_routes(target_app: FastAPI) -> FastAPI:
+    """Attach NOVA runtime routes to an app instance created for tests."""
+    target_app.add_api_route("/health", health, methods=["GET"])
+    target_app.add_api_route("/metrics", metrics, methods=["GET"])
+    target_app.add_api_route("/api/config/reload", reload_config, methods=["POST"])
+    target_app.add_api_route("/api/knowledge/ingest", ingest_knowledge, methods=["POST"])
+    target_app.add_api_route("/api/knowledge/stats", knowledge_stats, methods=["GET"])
+    target_app.add_api_route("/api/auth/token", create_token, methods=["POST"])
+    target_app.add_api_route("/api/runtime/hot-state", runtime_hot_state, methods=["GET"])
+    target_app.add_api_route("/api/runtime/sessions", runtime_sessions, methods=["GET"])
+    target_app.add_api_route("/api/runtime/sessions/{session_id}", runtime_session_detail, methods=["GET"])
+    target_app.add_api_route("/api/runtime/viewers", runtime_viewers, methods=["GET"])
+    target_app.add_api_route("/api/runtime/hot-state/viewers/{viewer_id}", runtime_hot_state_viewer, methods=["GET"])
+    target_app.add_api_websocket_route("/ws/control", control_ws)
+    return target_app
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
+    settings = app.state.nova.settings
     uvicorn.run(
         "apps.nova_server.main:app",
         host="0.0.0.0",

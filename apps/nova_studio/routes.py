@@ -232,6 +232,19 @@ async def studio_dashboard():
 
 
 @router.get("/api/status")
-async def studio_status():
+async def studio_status(request):
     """Get current system status for Studio."""
-    return JSONResponse({"status": "ok"})
+    nova = request.app.state.nova
+    hot_summary = {}
+    if getattr(nova, "hot_session", None):
+        hot_summary = await nova.hot_session.get_session() or {}
+    return JSONResponse({
+        "status": "ok",
+        "character": nova.personality.character_name if nova.personality else "NOVA",
+        "runtime": {
+            "instance_name": nova.settings.runtime.instance_name,
+            "session_id": nova.settings.runtime.session_id,
+            "hot_state": nova.hot_state is not None,
+        },
+        "summary": hot_summary,
+    })

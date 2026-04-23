@@ -138,7 +138,7 @@ class KuaishouAdapter(BaseAdapter):
         app_id: str = "",
         app_secret: str = "",
     ) -> None:
-        super().__init__(bus, Platform.TIKTOK)  # Reuse TIKTOK enum
+        super().__init__(bus, Platform.KUAISHOU)
         self._room_id = room_id
         self._token = token
         self._app_id = app_id
@@ -180,6 +180,7 @@ class KuaishouAdapter(BaseAdapter):
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
             log.info("Kuaishou WS connected, room=%s", self._room_id)
+            await self._recv_loop()
         except Exception as e:
             log.error("Kuaishou WS connection failed: %s", e)
             raise

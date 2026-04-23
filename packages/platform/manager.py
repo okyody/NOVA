@@ -56,6 +56,22 @@ class PlatformManager:
         self._statuses: dict[Platform, AdapterStatus] = {}
         self._running = False
 
+    @staticmethod
+    def validate_config(config: dict[str, Any]) -> tuple[bool, str]:
+        platform = str(config.get("platform", "")).strip().lower()
+        required: dict[str, list[str]] = {
+            "bilibili": ["room_id"],
+            "douyin": ["room_id", "app_id", "app_secret"],
+            "youtube": ["live_chat_id", "api_key"],
+            "twitch": ["channel", "oauth_token"],
+            "kuaishou": ["room_id"],
+            "wechat": ["room_id", "app_id", "app_secret"],
+        }
+        missing = [key for key in required.get(platform, []) if not config.get(key)]
+        if missing:
+            return False, f"missing required fields: {', '.join(missing)}"
+        return True, ""
+
     async def start(self, platform_configs: list[dict]) -> None:
         """Start all configured platform adapters."""
         self._running = True
@@ -88,6 +104,11 @@ class PlatformManager:
 
     async def add_platform(self, config: dict) -> None:
         """Hot-add a new platform adapter at runtime."""
+        valid, reason = self.validate_config(config)
+        if not valid:
+            log.warning("Skipping platform config for %s: %s", config.get("platform", "?"), reason)
+            return
+
         platform = Platform(config["platform"])
 
         if platform in self._adapters:

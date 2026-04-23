@@ -1,27 +1,26 @@
 """
 NOVA Event Bus
 ==============
-Async priority pub/sub. The single communication backbone.
-All inter-module communication flows through here — zero direct imports
-between modules (except from core.types).
+Async pub/sub with optional external transport mirroring.
 
-Design decisions:
-  - asyncio.PriorityQueue for CRITICAL events to preempt NORMAL work
-  - Per-event-type subscriber sets (O(1) dispatch)
-  - Wildcard subscriptions via prefix matching (e.g. "platform.*")
-  - Dead-letter queue for unhandled events (observability)
-  - Back-pressure: slow subscribers get a warning, not a crash
+Default mode remains in-process queue dispatch.
+Enterprise foundation:
+  - optional ingress idempotency before queueing
+  - optional Redis Streams mirroring for external consumers
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
+from abc import ABC, abstractmethod
 from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Awaitable, Callable
 
-from .types import EventType, NovaEvent, Priority
+from .types import EventType, NovaEvent
 
 log = logging.getLogger("nova.event_bus")
 
@@ -30,53 +29,196 @@ Handler = Callable[[NovaEvent], Awaitable[None]]
 
 @dataclass
 class _Subscription:
-    handler:    Handler
-    sub_id:     str
-    max_lag_ms: int = 500    # warn if handler takes longer
+    handler: Handler
+    sub_id: str
+    max_lag_ms: int = 500
+
+
+class EventTransportBackend(ABC):
+    @abstractmethod
+    async def start(self) -> None:
+        ...
+
+    @abstractmethod
+    async def stop(self) -> None:
+        ...
+
+    @abstractmethod
+    async def publish(self, event: NovaEvent) -> None:
+        ...
+
+    @abstractmethod
+    async def consume(self, *, block_ms: int = 1000, count: int = 10) -> list[NovaEvent]:
+        ...
+
+
+class InMemoryEventTransportBackend(EventTransportBackend):
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[NovaEvent] = asyncio.Queue()
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+    async def publish(self, event: NovaEvent) -> None:
+        await self._queue.put(event)
+
+    async def consume(self, *, block_ms: int = 1000, count: int = 10) -> list[NovaEvent]:
+        timeout_s = max(block_ms / 1000.0, 0.001)
+        events: list[NovaEvent] = []
+        try:
+            first = await asyncio.wait_for(self._queue.get(), timeout=timeout_s)
+            events.append(first)
+        except asyncio.TimeoutError:
+            return []
+
+        while len(events) < count:
+            try:
+                events.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return events
+
+
+class RedisStreamsEventTransportBackend(EventTransportBackend):
+    def __init__(
+        self,
+        url: str = "redis://localhost:6379",
+        db: int = 0,
+        stream: str = "nova:events",
+    ) -> None:
+        self._url = url
+        self._db = db
+        self._stream = stream
+        self._consumer_group = "nova-workers"
+        self._consumer_name = "nova-consumer-1"
+        self._client: Any = None
+
+    def configure_consumer(self, *, group: str, consumer: str) -> None:
+        self._consumer_group = group
+        self._consumer_name = consumer
+
+    def _client_or_raise(self) -> Any:
+        if self._client is None:
+            try:
+                import redis.asyncio as aioredis
+            except ImportError as exc:
+                raise ImportError("redis.asyncio not installed. Run: pip install redis") from exc
+            self._client = aioredis.from_url(self._url, db=self._db, decode_responses=True)
+        return self._client
+
+    async def start(self) -> None:
+        client = self._client_or_raise()
+        try:
+            await client.xgroup_create(self._stream, self._consumer_group, id="$", mkstream=True)
+        except Exception:
+            pass
+
+    async def stop(self) -> None:
+        if self._client is not None:
+            await self._client.close()
+
+    async def publish(self, event: NovaEvent) -> None:
+        client = self._client_or_raise()
+        await client.xadd(
+            self._stream,
+            {
+                "event_id": event.event_id,
+                "type": event.type.value,
+                "priority": str(event.priority.value),
+                "timestamp": event.timestamp.isoformat(),
+                "source": event.source,
+                "trace_id": event.trace_id or "",
+                "payload": json.dumps(event.payload, ensure_ascii=False, default=str),
+            },
+        )
+
+    async def consume(self, *, block_ms: int = 1000, count: int = 10) -> list[NovaEvent]:
+        client = self._client_or_raise()
+        results = await client.xreadgroup(
+            self._consumer_group,
+            self._consumer_name,
+            {self._stream: ">"},
+            count=count,
+            block=block_ms,
+        )
+        events: list[NovaEvent] = []
+        for _stream_name, items in results:
+            for redis_id, fields in items:
+                try:
+                    event = NovaEvent(
+                        type=EventType(fields["type"]),
+                        payload=json.loads(fields.get("payload", "{}")),
+                        priority=int(fields.get("priority", "2")),
+                        event_id=fields.get("event_id", redis_id),
+                        timestamp=datetime.fromisoformat(fields["timestamp"]) if fields.get("timestamp") else datetime.utcnow(),
+                        source=fields.get("source", "unknown"),
+                        trace_id=fields.get("trace_id") or None,
+                    )
+                except Exception:
+                    event = NovaEvent(
+                        type=EventType(fields["type"]),
+                        payload=json.loads(fields.get("payload", "{}")),
+                        priority=int(fields.get("priority", "2")),
+                        event_id=fields.get("event_id", redis_id),
+                        timestamp=datetime.fromisoformat(fields["timestamp"]) if fields.get("timestamp") else datetime.utcnow(),
+                        source=fields.get("source", "unknown"),
+                        trace_id=fields.get("trace_id") or None,
+                    )
+                events.append(event)
+                await client.xack(self._stream, self._consumer_group, redis_id)
+        return events
+
+
+def create_event_transport_backend(config: dict[str, Any] | None = None) -> EventTransportBackend:
+    config = config or {}
+    backend = config.get("backend", "memory")
+    if backend == "redis_streams":
+        transport = RedisStreamsEventTransportBackend(
+            url=config.get("url", "redis://localhost:6379"),
+            db=config.get("db", 0),
+            stream=config.get("stream", "nova:events"),
+        )
+        transport.configure_consumer(
+            group=config.get("consumer_group", "nova-workers"),
+            consumer=config.get("consumer_name", "nova-consumer-1"),
+        )
+        return transport
+    return InMemoryEventTransportBackend()
 
 
 class EventBus:
-    """
-    Central async event bus.
-
-    Usage
-    -----
-    bus = EventBus()
-    await bus.start()
-
-    # Subscribe
-    async def on_chat(event: NovaEvent):
-        print(event.payload["text"])
-
-    bus.subscribe(EventType.CHAT_MESSAGE, on_chat, sub_id="chat_printer")
-
-    # Publish
-    await bus.publish(NovaEvent(
-        type=EventType.CHAT_MESSAGE,
-        payload={"text": "hello"},
-    ))
-
-    await bus.stop()
-    """
-
-    def __init__(self, queue_size: int = 4096) -> None:
+    def __init__(
+        self,
+        queue_size: int = 4096,
+        transport_backend: EventTransportBackend | None = None,
+        ingress_idempotency_backend: Any | None = None,
+        ingress_idempotency_namespace: str = "nova",
+        ingress_idempotency_ttl_s: int = 600,
+        mode: str = "local",
+    ) -> None:
         self._queue: asyncio.PriorityQueue[tuple[int, float, NovaEvent]] = (
             asyncio.PriorityQueue(maxsize=queue_size)
         )
         self._subscribers: dict[str, list[_Subscription]] = defaultdict(list)
-        self._wildcard_subs: list[tuple[str, _Subscription]] = []  # (prefix, sub)
-        self._dlq: list[NovaEvent] = []           # dead letter queue
-        self._dispatch_task: asyncio.Task | None  = None
+        self._wildcard_subs: list[tuple[str, _Subscription]] = []
+        self._dlq: list[NovaEvent] = []
+        self._dispatch_task: asyncio.Task | None = None
         self._running = False
         self._stats: dict[str, int] = defaultdict(int)
-
-    # ── Lifecycle ──────────────────────────────────────────────────────────
+        self._transport_backend = transport_backend or InMemoryEventTransportBackend()
+        self._ingress_idempotency_backend = ingress_idempotency_backend
+        self._ingress_idempotency_namespace = ingress_idempotency_namespace
+        self._ingress_idempotency_ttl_s = ingress_idempotency_ttl_s
+        self._mode = mode
 
     async def start(self) -> None:
         self._running = True
-        self._dispatch_task = asyncio.create_task(
-            self._dispatch_loop(), name="nova.event_bus.dispatch"
-        )
+        await self._transport_backend.start()
+        loop_fn = self._consume_loop if self._mode == "external_consumer" else self._dispatch_loop
+        self._dispatch_task = asyncio.create_task(loop_fn(), name="nova.event_bus.dispatch")
         log.info("Event bus started")
 
     async def stop(self) -> None:
@@ -87,38 +229,48 @@ class EventBus:
                 await self._dispatch_task
             except asyncio.CancelledError:
                 pass
-        log.info(
-            "Event bus stopped. Stats: %s | DLQ size: %d",
-            dict(self._stats), len(self._dlq)
-        )
-
-    # ── Publish ────────────────────────────────────────────────────────────
+        await self._transport_backend.stop()
+        log.info("Event bus stopped. Stats: %s | DLQ size: %d", dict(self._stats), len(self._dlq))
 
     async def publish(self, event: NovaEvent) -> None:
-        """
-        Enqueue an event. Priority-ordered: lower int = higher priority.
-        Tie-break by timestamp so older events dispatch first within a tier.
-        """
         if not self._running:
             log.warning("Bus not running, dropping event %s", event.type)
             return
 
-        sort_key = (event.priority.value, time.monotonic())
-        try:
-            self._queue.put_nowait((sort_key[0], sort_key[1], event))
+        await self._transport_backend.publish(event)
+
+        if self._mode == "local":
+            sort_key = (event.priority.value, time.monotonic())
+            try:
+                self._queue.put_nowait((sort_key[0], sort_key[1], event))
+                self._stats["published"] += 1
+            except asyncio.QueueFull:
+                log.error("Event queue full! Dropping %s (priority=%s)", event.type, event.priority)
+                self._stats["dropped"] += 1
+        else:
             self._stats["published"] += 1
-        except asyncio.QueueFull:
-            log.error(
-                "Event queue full! Dropping %s (priority=%s)",
-                event.type, event.priority
+
+    async def publish_ingress(self, event: NovaEvent) -> bool:
+        if self._ingress_idempotency_backend is not None:
+            key = f"{self._ingress_idempotency_namespace}:ingress:{event.event_id}"
+            accepted = await self._ingress_idempotency_backend.set_if_absent_json(
+                key,
+                {
+                    "event_id": event.event_id,
+                    "type": event.type.value,
+                    "source": event.source,
+                    "timestamp": event.timestamp.isoformat(),
+                },
+                ttl=self._ingress_idempotency_ttl_s,
             )
-            self._stats["dropped"] += 1
+            if not accepted:
+                self._stats["duplicates"] += 1
+                return False
+        await self.publish(event)
+        return True
 
     def publish_sync(self, event: NovaEvent) -> None:
-        """Fire-and-forget from sync code. Creates a task."""
         asyncio.create_task(self.publish(event))
-
-    # ── Subscribe ──────────────────────────────────────────────────────────
 
     def subscribe(
         self,
@@ -127,14 +279,6 @@ class EventBus:
         sub_id: str = "",
         max_lag_ms: int = 500,
     ) -> None:
-        """
-        Subscribe to a specific event type or a wildcard prefix.
-
-        Examples:
-            bus.subscribe(EventType.CHAT_MESSAGE, handler)
-            bus.subscribe("platform.*", handler)   # all platform events
-            bus.subscribe("cognitive.*", handler)  # all cognitive events
-        """
         key = event_type.value if isinstance(event_type, EventType) else event_type
         sub = _Subscription(
             handler=handler,
@@ -145,25 +289,19 @@ class EventBus:
         if "*" in key:
             prefix = key.rstrip("*")
             self._wildcard_subs.append((prefix, sub))
-            log.debug("Wildcard subscription: %s → %s", key, sub.sub_id)
+            log.debug("Wildcard subscription: %s -> %s", key, sub.sub_id)
         else:
             self._subscribers[key].append(sub)
-            log.debug("Subscription: %s → %s", key, sub.sub_id)
+            log.debug("Subscription: %s -> %s", key, sub.sub_id)
 
     def unsubscribe(self, event_type: EventType | str, sub_id: str) -> None:
         key = event_type.value if isinstance(event_type, EventType) else event_type
-        self._subscribers[key] = [
-            s for s in self._subscribers[key] if s.sub_id != sub_id
-        ]
-
-    # ── Internal dispatch ──────────────────────────────────────────────────
+        self._subscribers[key] = [s for s in self._subscribers[key] if s.sub_id != sub_id]
 
     async def _dispatch_loop(self) -> None:
         while self._running:
             try:
-                _, _, event = await asyncio.wait_for(
-                    self._queue.get(), timeout=1.0
-                )
+                _, _, event = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -172,11 +310,24 @@ class EventBus:
             await self._dispatch(event)
             self._queue.task_done()
 
+    async def _consume_loop(self) -> None:
+        while self._running:
+            try:
+                events = await self._transport_backend.consume(block_ms=1000, count=10)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                log.warning("External consumer poll failed: %s", exc)
+                await asyncio.sleep(1)
+                continue
+
+            for event in events:
+                await self._dispatch(event)
+
     async def _dispatch(self, event: NovaEvent) -> None:
         key = event.type.value
         handlers = list(self._subscribers.get(key, []))
 
-        # Add wildcard matches
         for prefix, sub in self._wildcard_subs:
             if key.startswith(prefix):
                 handlers.append(sub)
@@ -184,10 +335,9 @@ class EventBus:
         if not handlers:
             self._dlq.append(event)
             self._stats["dlq"] += 1
-            log.debug("No handler for event %s → DLQ", event.type)
+            log.debug("No handler for event %s -> DLQ", event.type)
             return
 
-        # Fan out to all handlers concurrently
         tasks = [self._invoke(sub, event) for sub in handlers]
         await asyncio.gather(*tasks, return_exceptions=True)
         self._stats["dispatched"] += 1
@@ -198,19 +348,14 @@ class EventBus:
             await sub.handler(event)
             lag_ms = (time.monotonic() - t0) * 1000
             if lag_ms > sub.max_lag_ms:
-                log.warning(
-                    "Slow handler %s for %s: %.0f ms", sub.sub_id, event.type, lag_ms
-                )
+                log.warning("Slow handler %s for %s: %.0f ms", sub.sub_id, event.type, lag_ms)
         except Exception as exc:
-            log.exception(
-                "Handler %s raised for event %s: %s", sub.sub_id, event.type, exc
-            )
+            log.exception("Handler %s raised for event %s: %s", sub.sub_id, event.type, exc)
             self._stats["errors"] += 1
 
-    # ── Observability ──────────────────────────────────────────────────────
-
     def stats(self) -> dict[str, int]:
-        return dict(self._stats) | {"queue_depth": self._queue.qsize()}
+        queue_depth = self._queue.qsize() if self._mode == "local" else 0
+        return dict(self._stats) | {"queue_depth": queue_depth}
 
     def dlq_drain(self) -> list[NovaEvent]:
         events, self._dlq = self._dlq[:], []

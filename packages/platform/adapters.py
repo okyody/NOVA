@@ -106,6 +106,11 @@ class BaseAdapter(ABC):
     # ── Helpers ────────────────────────────────────────────────────────────
 
     async def _emit(self, event: NovaEvent) -> None:
+        if hasattr(self._bus, "publish_ingress"):
+            accepted = await self._bus.publish_ingress(event)
+            if not accepted:
+                log.debug("Dropped duplicate ingress event: %s %s", self._platform.value, event.event_id)
+            return
         await self._bus.publish(event)
 
     def _make_viewer(self, data: dict[str, Any]) -> ViewerProfile:
@@ -336,21 +341,22 @@ def create_adapter(platform: Platform, bus: EventBus, config: dict) -> BaseAdapt
             oauth_token=config.get("oauth_token", ""),
             username=config.get("username", "nova_bot"),
         )
-    elif platform == Platform.TIKTOK:
-        # Kuaishou uses TIKTOK platform enum for now
+    elif platform == Platform.KUAISHOU:
         from .kuaishou_adapter import KuaishouAdapter
         return KuaishouAdapter(
             bus=bus,
             room_id=str(config.get("room_id", "")),
             token=config.get("token", ""),
+            app_id=config.get("app_id", ""),
+            app_secret=config.get("app_secret", ""),
         )
-    elif platform == Platform.LOCAL:
-        # WeChat uses LOCAL platform enum for now
+    elif platform == Platform.WECHAT:
         from .wechat_adapter import WeChatAdapter
         return WeChatAdapter(
             bus=bus,
             room_id=str(config.get("room_id", "")),
             app_id=config.get("app_id", ""),
             app_secret=config.get("app_secret", ""),
+            mode=config.get("mode", "polling"),
         )
     raise NotImplementedError(f"No adapter for platform: {platform.value}")
