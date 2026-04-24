@@ -60,6 +60,15 @@ def test_runtime_history_endpoints_with_fake_postgres_store() -> None:
         async def list_audit_logs(self, *, limit: int = 100, offset: int = 0, action=None, resource_type=None):
             return [{"id": "audit-1", "action": "runtime_session_started"}]
 
+        async def list_tenants(self, *, limit: int = 100, offset: int = 0):
+            return [{"id": "tenant-1", "slug": "demo"}]
+
+        async def list_roles(self, *, tenant_id=None, limit: int = 100, offset: int = 0):
+            return [{"id": "role-1", "name": "admin"}]
+
+        async def list_config_revisions(self, *, tenant_id=None, resource_type=None, resource_id=None, limit: int = 100, offset: int = 0):
+            return [{"id": "rev-1", "resource_type": "runtime"}]
+
         async def stop(self):
             return None
 
@@ -71,6 +80,9 @@ def test_runtime_history_endpoints_with_fake_postgres_store() -> None:
         sessions = client.get("/api/runtime/storage/sessions?limit=10&offset=0&status=running&role=cognitive")
         viewers = client.get("/api/runtime/storage/viewers?limit=10&offset=0&session_id=primary&platform=bilibili")
         audit = client.get("/api/runtime/storage/audit?limit=10&offset=0&action=runtime_session_started&resource_type=runtime_session")
+        tenants = client.get("/api/control/tenants?limit=10&offset=0")
+        roles = client.get("/api/control/roles?tenant_id=tenant-1&limit=10&offset=0")
+        revisions = client.get("/api/control/config-revisions?tenant_id=tenant-1&resource_type=runtime&resource_id=nova&limit=10&offset=0")
         studio = client.get("/studio/api/status")
 
     assert turns.status_code == 200
@@ -83,5 +95,11 @@ def test_runtime_history_endpoints_with_fake_postgres_store() -> None:
     assert viewers.json()["count"] == 1
     assert audit.status_code == 200
     assert audit.json()["count"] == 1
+    assert tenants.status_code == 200
+    assert tenants.json()["count"] == 1
+    assert roles.status_code == 200
+    assert roles.json()["count"] == 1
+    assert revisions.status_code == 200
+    assert revisions.json()["count"] == 1
     assert studio.status_code == 200
     assert "history_preview" in studio.json()

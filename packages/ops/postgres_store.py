@@ -127,6 +127,46 @@ class PostgresRuntimeStore:
                 )
                 '''
             )
+            await conn.execute(
+                f'''
+                create table if not exists "{self._schema}".tenants (
+                    id text primary key,
+                    name text not null,
+                    slug text not null unique,
+                    status text not null default 'active',
+                    plan text not null default 'enterprise',
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                )
+                '''
+            )
+            await conn.execute(
+                f'''
+                create table if not exists "{self._schema}".roles (
+                    id text primary key,
+                    tenant_id text not null,
+                    name text not null,
+                    scope text not null,
+                    description text,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                )
+                '''
+            )
+            await conn.execute(
+                f'''
+                create table if not exists "{self._schema}".config_revisions (
+                    id text primary key,
+                    tenant_id text not null,
+                    resource_type text not null,
+                    resource_id text not null,
+                    revision_no integer not null,
+                    status text not null default 'draft',
+                    config_json jsonb not null default '{{}}'::jsonb,
+                    created_at timestamptz not null default now()
+                )
+                '''
+            )
 
     async def persist_event(self, event: NovaEvent) -> None:
         if event.type == EventType.SAFETY_BLOCK and self._persist_safety:
@@ -440,6 +480,154 @@ class PostgresRuntimeStore:
                 from "{self._schema}".audit_logs
                 {where_sql}
                 order by ts desc
+                limit ${len(args)-1} offset ${len(args)}
+                ''',
+                *args,
+            )
+        return [dict(r) for r in rows]
+
+    async def create_tenant(self, tenant_id: str, name: str, slug: str, plan: str = "enterprise") -> None:
+        if self._pool is None:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''
+                insert into "{self._schema}".tenants (id, name, slug, status, plan)
+                values ($1,$2,$3,'active',$4)
+                on conflict (id) do update set
+                    name = excluded.name,
+                    slug = excluded.slug,
+                    plan = excluded.plan,
+                    updated_at = now()
+                ''',
+                tenant_id,
+                name,
+                slug,
+                plan,
+            )
+
+    async def list_tenants(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, name, slug, status, plan, created_at, updated_at
+                from "{self._schema}".tenants
+                order by created_at desc
+                limit $1 offset $2
+                ''',
+                limit,
+                offset,
+            )
+        return [dict(r) for r in rows]
+
+    async def create_role(self, role_id: str, tenant_id: str, name: str, scope: str, description: str = "") -> None:
+        if self._pool is None:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''
+                insert into "{self._schema}".roles (id, tenant_id, name, scope, description)
+                values ($1,$2,$3,$4,$5)
+                on conflict (id) do update set
+                    name = excluded.name,
+                    scope = excluded.scope,
+                    description = excluded.description,
+                    updated_at = now()
+                ''',
+                role_id,
+                tenant_id,
+                name,
+                scope,
+                description,
+            )
+
+    async def list_roles(self, *, tenant_id: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        clauses = []
+        args: list[Any] = []
+        if tenant_id:
+            args.append(tenant_id)
+            clauses.append(f"tenant_id = ${len(args)}")
+        where_sql = f"where {' and '.join(clauses)}" if clauses else ""
+        args.extend([limit, offset])
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, tenant_id, name, scope, description, created_at, updated_at
+                from "{self._schema}".roles
+                {where_sql}
+                order by created_at desc
+                limit ${len(args)-1} offset ${len(args)}
+                ''',
+                *args,
+            )
+        return [dict(r) for r in rows]
+
+    async def create_config_revision(
+        self,
+        revision_id: str,
+        tenant_id: str,
+        resource_type: str,
+        resource_id: str,
+        revision_no: int,
+        config_json: dict[str, Any],
+        status: str = "draft",
+    ) -> None:
+        if self._pool is None:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''
+                insert into "{self._schema}".config_revisions
+                (id, tenant_id, resource_type, resource_id, revision_no, status, config_json)
+                values ($1,$2,$3,$4,$5,$6,$7::jsonb)
+                on conflict (id) do update set
+                    status = excluded.status,
+                    config_json = excluded.config_json
+                ''',
+                revision_id,
+                tenant_id,
+                resource_type,
+                resource_id,
+                revision_no,
+                status,
+                json.dumps(config_json, ensure_ascii=False, default=str),
+            )
+
+    async def list_config_revisions(
+        self,
+        *,
+        tenant_id: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        clauses = []
+        args: list[Any] = []
+        if tenant_id:
+            args.append(tenant_id)
+            clauses.append(f"tenant_id = ${len(args)}")
+        if resource_type:
+            args.append(resource_type)
+            clauses.append(f"resource_type = ${len(args)}")
+        if resource_id:
+            args.append(resource_id)
+            clauses.append(f"resource_id = ${len(args)}")
+        where_sql = f"where {' and '.join(clauses)}" if clauses else ""
+        args.extend([limit, offset])
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, tenant_id, resource_type, resource_id, revision_no, status, config_json, created_at
+                from "{self._schema}".config_revisions
+                {where_sql}
+                order by created_at desc
                 limit ${len(args)-1} offset ${len(args)}
                 ''',
                 *args,

@@ -867,6 +867,49 @@ async def runtime_storage_audit(request: Request):
     return {"status": "ok", "count": len(rows), "items": rows}
 
 
+@app.get("/api/control/tenants")
+async def control_tenants(request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    limit = int(request.query_params.get("limit", "100"))
+    offset = int(request.query_params.get("offset", "0"))
+    rows = await nova.postgres_store.list_tenants(limit=limit, offset=offset)
+    return {"status": "ok", "count": len(rows), "items": rows}
+
+
+@app.get("/api/control/roles")
+async def control_roles(request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    tenant_id = request.query_params.get("tenant_id")
+    limit = int(request.query_params.get("limit", "100"))
+    offset = int(request.query_params.get("offset", "0"))
+    rows = await nova.postgres_store.list_roles(tenant_id=tenant_id, limit=limit, offset=offset)
+    return {"status": "ok", "count": len(rows), "items": rows}
+
+
+@app.get("/api/control/config-revisions")
+async def control_config_revisions(request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    tenant_id = request.query_params.get("tenant_id")
+    resource_type = request.query_params.get("resource_type")
+    resource_id = request.query_params.get("resource_id")
+    limit = int(request.query_params.get("limit", "100"))
+    offset = int(request.query_params.get("offset", "0"))
+    rows = await nova.postgres_store.list_config_revisions(
+        tenant_id=tenant_id,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        limit=limit,
+        offset=offset,
+    )
+    return {"status": "ok", "count": len(rows), "items": rows}
+
+
 @app.get("/api/runtime/hot-state")
 async def runtime_hot_state(request: Request):
     nova = request.app.state.nova
@@ -999,6 +1042,9 @@ def attach_runtime_routes(target_app: FastAPI) -> FastAPI:
     target_app.add_api_route("/api/runtime/storage/sessions", runtime_storage_sessions, methods=["GET"])
     target_app.add_api_route("/api/runtime/storage/viewers", runtime_storage_viewers, methods=["GET"])
     target_app.add_api_route("/api/runtime/storage/audit", runtime_storage_audit, methods=["GET"])
+    target_app.add_api_route("/api/control/tenants", control_tenants, methods=["GET"])
+    target_app.add_api_route("/api/control/roles", control_roles, methods=["GET"])
+    target_app.add_api_route("/api/control/config-revisions", control_config_revisions, methods=["GET"])
     target_app.add_api_route("/api/auth/token", create_token, methods=["POST"])
     target_app.add_api_route("/api/runtime/hot-state", runtime_hot_state, methods=["GET"])
     target_app.add_api_route("/api/runtime/sessions", runtime_sessions, methods=["GET"])

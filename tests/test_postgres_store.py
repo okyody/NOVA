@@ -72,6 +72,37 @@ class _FakeConn:
                 "last_message": "hello",
                 "payload_json": {},
             }]
+        if "roles" in query:
+            return [{
+                "id": "role-1",
+                "tenant_id": "tenant-1",
+                "name": "admin",
+                "scope": "tenant",
+                "description": "Administrator",
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            }]
+        if "config_revisions" in query:
+            return [{
+                "id": "rev-1",
+                "tenant_id": "tenant-1",
+                "resource_type": "runtime",
+                "resource_id": "nova",
+                "revision_no": 1,
+                "status": "draft",
+                "config_json": {},
+                "created_at": datetime.utcnow(),
+            }]
+        if "tenants" in query:
+            return [{
+                "id": "tenant-1",
+                "name": "Demo Tenant",
+                "slug": "demo",
+                "status": "active",
+                "plan": "enterprise",
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            }]
         return [{
             "id": "audit-1",
             "runtime_instance": "nova",
@@ -205,3 +236,21 @@ async def test_postgres_store_lists_audit_logs():
     store._pool = _FakePool()
     rows = await store.list_audit_logs(limit=10, offset=0, action="runtime_session_started", resource_type="runtime_session")
     assert rows[0]["id"] == "audit-1"
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_creates_and_lists_tenants_roles_and_revisions():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+
+    await store.create_tenant("tenant-1", "Demo Tenant", "demo")
+    await store.create_role("role-1", "tenant-1", "admin", "tenant", "Administrator")
+    await store.create_config_revision("rev-1", "tenant-1", "runtime", "nova", 1, {"foo": "bar"})
+
+    tenants = await store.list_tenants(limit=10, offset=0)
+    roles = await store.list_roles(tenant_id="tenant-1", limit=10, offset=0)
+    revisions = await store.list_config_revisions(tenant_id="tenant-1", resource_type="runtime", resource_id="nova", limit=10, offset=0)
+
+    assert tenants[0]["id"] == "tenant-1"
+    assert roles[0]["id"] == "role-1"
+    assert revisions[0]["id"] == "rev-1"
