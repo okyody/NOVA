@@ -130,6 +130,36 @@ if HAS_PROMETHEUS:
         "EventBus queue depth",
         registry=_registry,
     )
+    eventbus_pending = Gauge(
+        "nova_eventbus_pending_messages",
+        "EventBus pending messages in external transport",
+        registry=_registry,
+    )
+    eventbus_stream_length = Gauge(
+        "nova_eventbus_stream_length",
+        "EventBus external stream length",
+        registry=_registry,
+    )
+    eventbus_dlq_length = Gauge(
+        "nova_eventbus_dlq_length",
+        "EventBus dead-letter stream length",
+        registry=_registry,
+    )
+    eventbus_retries_total = Gauge(
+        "nova_eventbus_retries_total",
+        "EventBus retried messages total",
+        registry=_registry,
+    )
+    eventbus_reclaimed_total = Gauge(
+        "nova_eventbus_reclaimed_total",
+        "EventBus reclaimed stale messages total",
+        registry=_registry,
+    )
+    eventbus_dead_lettered_total = Gauge(
+        "nova_eventbus_dead_lettered_total",
+        "EventBus dead-lettered messages total",
+        registry=_registry,
+    )
     circuit_breaker_state = Gauge(
         "nova_circuit_breaker_state",
         "Circuit breaker state (0=closed, 1=open, 2=half_open)",
@@ -194,6 +224,30 @@ class MetricsCollector:
     def set_queue_depth(self, depth: int) -> None:
         if self._enabled:
             queue_depth.set(depth)
+
+    def set_eventbus_pending(self, count: int) -> None:
+        if self._enabled:
+            eventbus_pending.set(count)
+
+    def set_eventbus_stream_length(self, count: int) -> None:
+        if self._enabled:
+            eventbus_stream_length.set(count)
+
+    def set_eventbus_dlq_length(self, count: int) -> None:
+        if self._enabled:
+            eventbus_dlq_length.set(count)
+
+    def set_eventbus_retries_total(self, count: int) -> None:
+        if self._enabled:
+            eventbus_retries_total.set(count)
+
+    def set_eventbus_reclaimed_total(self, count: int) -> None:
+        if self._enabled:
+            eventbus_reclaimed_total.set(count)
+
+    def set_eventbus_dead_lettered_total(self, count: int) -> None:
+        if self._enabled:
+            eventbus_dead_lettered_total.set(count)
 
     def set_circuit_breaker(self, name: str, state: str) -> None:
         if self._enabled:

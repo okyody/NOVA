@@ -74,6 +74,7 @@ from packages.ops.safety_guard            import SafetyGuard
 from packages.ops.circuit_breaker         import CircuitBreaker, FallbackResponder
 from packages.ops.health_monitor          import HealthMonitor, SimpleHealthCheck
 from packages.ops.metrics                 import MetricsCollector, metrics as global_metrics
+from packages.ops.postgres_store          import PostgresRuntimeStore
 from packages.ops.security_middleware     import setup_security_middleware, InputValidator
 from packages.ops.hot_state               import HotStateSync, RuntimeSessionState, RuntimeStateProjector, create_hot_state_backend
 from packages.ops.tracing                 import setup_tracing
@@ -113,6 +114,7 @@ class NovaApp:
         self.fallback:           FallbackResponder | None      = None
         self.health_monitor:     HealthMonitor | None          = None
         self.state_mgr:          StateManager | None           = None
+        self.postgres_store:     PostgresRuntimeStore | None   = None
         self.metrics:            MetricsCollector              = global_metrics
         self.jwt_auth:           Any | None                    = None
         self.hot_state:          HotStateSync | None           = None
@@ -495,6 +497,25 @@ class NovaApp:
                 ):
                     self.bus.subscribe(et, _project_hot_state, sub_id=f"hot_state_{et.name.lower()}")
 
+        if self.bus and (persist.persist_conversations or persist.persist_safety):
+            self.postgres_store = PostgresRuntimeStore(
+                persist.postgres_url,
+                schema=persist.postgres_schema,
+                persist_conversations=persist.persist_conversations,
+                persist_safety=persist.persist_safety,
+            )
+            await self.postgres_store.start()
+
+            async def _persist_runtime_event(event):
+                if self.postgres_store:
+                    await self.postgres_store.persist_event(event)
+
+            if persist.persist_conversations:
+                self.bus.subscribe(EventType.CHAT_MESSAGE, _persist_runtime_event, sub_id="pg_chat")
+                self.bus.subscribe(EventType.SAFE_OUTPUT, _persist_runtime_event, sub_id="pg_safe_output")
+            if persist.persist_safety:
+                self.bus.subscribe(EventType.SAFETY_BLOCK, _persist_runtime_event, sub_id="pg_safety_block")
+
         log.info(
             "NOVA started. Character: %s | LLM: %s | KB: %s | NLU: %s | Tools: %s | "
             "Auth: %s | Trace: %s | Platforms: %d | Avatar: %s",
@@ -537,6 +558,8 @@ class NovaApp:
         # Close knowledge resources
         if self.embedder and hasattr(self.embedder, "close"):
             await self.embedder.close()
+        if self.postgres_store:
+            await self.postgres_store.stop()
         if self.hot_session and self._hot_session_started:
             await self.hot_session.mark_session_stopped()
         if self.hot_state:
@@ -657,11 +680,18 @@ async def health(request: Request):
 async def metrics(request: Request):
     """Prometheus-compatible plaintext metrics."""
     nova = request.app.state.nova
+    stats = nova.bus.stats() if nova.bus else {}
+    nova.metrics.set_queue_depth(stats.get("queue_depth", 0))
+    nova.metrics.set_eventbus_pending(stats.get("pending", 0))
+    nova.metrics.set_eventbus_stream_length(stats.get("stream_length", 0))
+    nova.metrics.set_eventbus_dlq_length(stats.get("dlq_length", 0))
+    nova.metrics.set_eventbus_retries_total(stats.get("retries_total", 0))
+    nova.metrics.set_eventbus_reclaimed_total(stats.get("reclaimed_total", 0))
+    nova.metrics.set_eventbus_dead_lettered_total(stats.get("dead_lettered_total", 0))
     content, content_type = nova.metrics.generate_metrics()
     if content:
         return PlainTextResponse(content, media_type=content_type)
     # Fallback when prometheus_client not installed
-    stats = nova.bus.stats() if nova.bus else {}
     safety = nova.safety.stats() if nova.safety else {}
     lines = [
         "# HELP nova_events_published Total events published",

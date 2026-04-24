@@ -245,6 +245,32 @@ async def test_event_bus_external_consumer_mode_dispatches_from_transport():
     await bus.stop()
 
 
+@pytest.mark.asyncio
+async def test_redis_transport_stats_report_retry_and_dlq_counters():
+    class _FakeRedis:
+        async def xpending_range(self, *args, **kwargs):
+            return []
+
+        async def xreadgroup(self, *args, **kwargs):
+            return []
+
+        async def xlen(self, stream):
+            return 2 if stream == "nova:events" else 1
+
+    backend = RedisStreamsEventTransportBackend(stream="nova:events")
+    backend._client = _FakeRedis()
+    backend._retries_total = 3
+    backend._reclaimed_total = 2
+    backend._dead_lettered_total = 1
+    backend._last_pending_count = 4
+
+    stats = await backend.stats()
+    assert stats["stream_length"] == 2
+    assert stats["dlq_length"] == 1
+    assert stats["pending"] == 4
+    assert stats["retries_total"] == 3
+
+
 # ─── Emotion Agent Tests ──────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

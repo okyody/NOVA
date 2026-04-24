@@ -33,6 +33,7 @@ dependencies = [
     "prometheus-client>=0.20",
     "structlog>=24.2",
     "psutil>=5.9",
+    "asyncpg>=0.30",
 
     # Security
     "PyJWT>=2.8",

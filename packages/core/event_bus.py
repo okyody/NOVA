@@ -51,6 +51,10 @@ class EventTransportBackend(ABC):
     async def consume(self, *, block_ms: int = 1000, count: int = 10) -> list[NovaEvent]:
         ...
 
+    @abstractmethod
+    async def stats(self) -> dict[str, int]:
+        ...
+
 
 class InMemoryEventTransportBackend(EventTransportBackend):
     def __init__(self) -> None:
@@ -81,6 +85,9 @@ class InMemoryEventTransportBackend(EventTransportBackend):
                 break
         return events
 
+    async def stats(self) -> dict[str, int]:
+        return {"stream_length": self._queue.qsize(), "pending": 0, "dlq_length": 0, "retries_total": 0, "reclaimed_total": 0, "dead_lettered_total": 0}
+
 
 class RedisStreamsEventTransportBackend(EventTransportBackend):
     def __init__(
@@ -98,6 +105,10 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
         self._reclaim_batch_size = 20
         self._max_retries = 5
         self._dlq_stream = f"{stream}:dlq"
+        self._last_pending_count = 0
+        self._retries_total = 0
+        self._reclaimed_total = 0
+        self._dead_lettered_total = 0
         self._client: Any = None
 
     def configure_consumer(
@@ -195,6 +206,7 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
 
         if not pending:
             return []
+        self._last_pending_count = len(pending)
 
         reclaim_ids: list[str] = []
         events: list[NovaEvent] = []
@@ -207,6 +219,7 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
                 await self._move_to_dlq(msg_id)
                 continue
             reclaim_ids.append(msg_id)
+            self._retries_total += 1
 
         if not reclaim_ids:
             return []
@@ -226,6 +239,7 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
             event = self._deserialize_event(redis_id, fields)
             if event is not None:
                 events.append(event)
+                self._reclaimed_total += 1
                 await client.xack(self._stream, self._consumer_group, redis_id)
         return events
 
@@ -240,6 +254,7 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
         payload["dead_lettered_at"] = datetime.utcnow().isoformat()
         await client.xadd(self._dlq_stream, payload)
         await client.xack(self._stream, self._consumer_group, redis_id)
+        self._dead_lettered_total += 1
 
     def _deserialize_event(self, redis_id: str, fields: dict[str, Any]) -> NovaEvent | None:
         try:
@@ -255,6 +270,27 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
         except Exception:
             log.warning("Failed to deserialize event from stream id=%s", redis_id)
             return None
+
+    async def stats(self) -> dict[str, int]:
+        client = self._client_or_raise()
+        stream_length = 0
+        dlq_length = 0
+        try:
+            stream_length = await client.xlen(self._stream)
+        except Exception:
+            pass
+        try:
+            dlq_length = await client.xlen(self._dlq_stream)
+        except Exception:
+            pass
+        return {
+            "stream_length": int(stream_length),
+            "pending": int(self._last_pending_count),
+            "dlq_length": int(dlq_length),
+            "retries_total": int(self._retries_total),
+            "reclaimed_total": int(self._reclaimed_total),
+            "dead_lettered_total": int(self._dead_lettered_total),
+        }
 
 
 def create_event_transport_backend(config: dict[str, Any] | None = None) -> EventTransportBackend:
@@ -297,6 +333,7 @@ class EventBus:
         self._dispatch_task: asyncio.Task | None = None
         self._running = False
         self._stats: dict[str, int] = defaultdict(int)
+        self._transport_stats: dict[str, int] = {}
         self._transport_backend = transport_backend or InMemoryEventTransportBackend()
         self._ingress_idempotency_backend = ingress_idempotency_backend
         self._ingress_idempotency_namespace = ingress_idempotency_namespace
@@ -306,6 +343,7 @@ class EventBus:
     async def start(self) -> None:
         self._running = True
         await self._transport_backend.start()
+        self._transport_stats = await self._transport_backend.stats()
         loop_fn = self._consume_loop if self._mode == "external_consumer" else self._dispatch_loop
         self._dispatch_task = asyncio.create_task(loop_fn(), name="nova.event_bus.dispatch")
         log.info("Event bus started")
@@ -403,6 +441,7 @@ class EventBus:
         while self._running:
             try:
                 events = await self._transport_backend.consume(block_ms=1000, count=10)
+                self._transport_stats = await self._transport_backend.stats()
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -444,7 +483,7 @@ class EventBus:
 
     def stats(self) -> dict[str, int]:
         queue_depth = self._queue.qsize() if self._mode == "local" else 0
-        return dict(self._stats) | {"queue_depth": queue_depth}
+        return dict(self._stats) | {"queue_depth": queue_depth, **self._transport_stats}
 
     def dlq_drain(self) -> list[NovaEvent]:
         events, self._dlq = self._dlq[:], []

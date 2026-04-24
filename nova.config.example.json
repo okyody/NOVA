@@ -76,7 +76,11 @@
     "redis_url": "redis://localhost:6379",
     "redis_db": 0,
     "redis_ttl": 604800,
-    "auto_save_interval_s": 300
+    "auto_save_interval_s": 300,
+    "postgres_url": "postgresql://nova:nova@localhost:5432/nova",
+    "postgres_schema": "public",
+    "persist_conversations": false,
+    "persist_safety": false
   },
   "resilience": {
     "circuit_breaker_enabled": true,

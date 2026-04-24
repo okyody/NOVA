@@ -141,6 +141,10 @@ class PersistenceConfig(BaseSettings):
     redis_db: int = 0
     redis_ttl: int = 604800  # 7 days
     auto_save_interval_s: int = 300
+    postgres_url: str = "postgresql://nova:nova@localhost:5432/nova"
+    postgres_schema: str = "public"
+    persist_conversations: bool = False
+    persist_safety: bool = False
 
 
 class ResilienceConfig(BaseSettings):
