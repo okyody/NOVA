@@ -71,6 +71,7 @@ def test_runtime_history_endpoints_with_fake_postgres_store() -> None:
         sessions = client.get("/api/runtime/storage/sessions?limit=10&offset=0&status=running&role=cognitive")
         viewers = client.get("/api/runtime/storage/viewers?limit=10&offset=0&session_id=primary&platform=bilibili")
         audit = client.get("/api/runtime/storage/audit?limit=10&offset=0&action=runtime_session_started&resource_type=runtime_session")
+        studio = client.get("/studio/api/status")
 
     assert turns.status_code == 200
     assert turns.json()["count"] == 1
@@ -82,3 +83,5 @@ def test_runtime_history_endpoints_with_fake_postgres_store() -> None:
     assert viewers.json()["count"] == 1
     assert audit.status_code == 200
     assert audit.json()["count"] == 1
+    assert studio.status_code == 200
+    assert "history_preview" in studio.json()

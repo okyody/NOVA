@@ -53,7 +53,10 @@ spec:
             - name: NOVA_PERSIST__REDIS_URL
               value: redis://redis:6379
             - name: NOVA_PERSIST__POSTGRES_URL
-              value: postgresql://nova:nova@postgres:5432/nova
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: postgres-url
             - name: NOVA_PERSIST__PERSIST_CONVERSATIONS
               value: "true"
             - name: NOVA_PERSIST__PERSIST_SAFETY
@@ -260,11 +263,20 @@ spec:
           image: postgres:16-alpine
           env:
             - name: POSTGRES_USER
-              value: nova
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: postgres-user
             - name: POSTGRES_PASSWORD
-              value: nova
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: postgres-password
             - name: POSTGRES_DB
-              value: nova
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: postgres-db
           ports:
             - containerPort: 5432
           volumeMounts:
@@ -282,6 +294,7 @@ spec:
         name: postgres-data
       spec:
         accessModes: ["ReadWriteOnce"]
+        storageClassName: standard
         resources:
           requests:
             storage: 10Gi
@@ -296,6 +309,17 @@ spec:
   ports:
     - port: 5432
       targetPort: 5432
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secrets
+type: Opaque
+stringData:
+  postgres-user: nova
+  postgres-password: nova
+  postgres-db: nova
+  postgres-url: postgresql://nova:nova@postgres:5432/nova
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -368,3 +392,58 @@ data:
       resource_id text,
       detail_json jsonb not null default '{}'::jsonb
     );
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+spec:
+  schedule: "0 */6 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              env:
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secrets
+                      key: postgres-user
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secrets
+                      key: postgres-password
+                - name: PGDATABASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secrets
+                      key: postgres-db
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  pg_dump -h postgres -U "$PGUSER" "$PGDATABASE" > /backup/nova-$(date +%Y%m%d%H%M%S).sql
+              volumeMounts:
+                - name: backup-data
+                  mountPath: /backup
+          volumes:
+            - name: backup-data
+              persistentVolumeClaim:
+                claimName: postgres-backup-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backup-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi

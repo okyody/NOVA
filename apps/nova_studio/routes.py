@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 log = logging.getLogger("nova.studio")
@@ -90,6 +90,25 @@ STUDIO_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
+      <div class="grid grid-cols-4 gap-4 mb-6">
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-1">Consumer Lag</div>
+          <div class="text-2xl font-bold" id="consumer-lag">0</div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-1">Pending</div>
+          <div class="text-2xl font-bold" id="pending">0</div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-1">Retries</div>
+          <div class="text-2xl font-bold" id="retries">0</div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-1">DLQ</div>
+          <div class="text-2xl font-bold" id="dlq">0</div>
+        </div>
+      </div>
+
       <div class="grid grid-cols-2 gap-4">
         <!-- Emotion Gauge -->
         <div class="card p-4">
@@ -110,6 +129,21 @@ STUDIO_HTML = """<!DOCTYPE html>
           <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Stream Heat</div>
           <div class="text-lg font-bold" id="heat-level">NORMAL</div>
           <div class="text-xs text-white/40" id="heat-detail">Chat: 0/min | Gifts: 0/min</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4 mt-4">
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Persisted History</div>
+          <div class="text-xs text-white/40 mb-2">Conversation <span id="conv-count">0</span> | Safety <span id="safety-count">0</span></div>
+          <div id="history-preview" class="max-h-[220px] overflow-auto text-xs text-white/70"></div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Runtime</div>
+          <div class="text-xs text-white/60">Role: <span id="runtime-role">unknown</span></div>
+          <div class="text-xs text-white/60">Instance: <span id="runtime-instance">unknown</span></div>
+          <div class="text-xs text-white/60">Session: <span id="runtime-session">unknown</span></div>
+          <div class="text-xs text-white/60">Hot State: <span id="runtime-hot">false</span></div>
         </div>
       </div>
     </div>
@@ -214,10 +248,37 @@ setInterval(async () => {
     const d = await r.json();
     document.getElementById('blocks').textContent = d.safety?.blocks || 0;
     document.getElementById('queue').textContent = d.bus?.queue_depth || 0;
+    document.getElementById('consumer-lag').textContent = d.eventbus?.lag || 0;
+    document.getElementById('pending').textContent = d.eventbus?.pending || 0;
+    document.getElementById('retries').textContent = d.eventbus?.retries || 0;
+    document.getElementById('dlq').textContent = d.eventbus?.dlq_length || 0;
     document.getElementById('char-name').textContent = d.character || 'NOVA';
     const uptime = Math.floor((Date.now() - startTime) / 1000);
     const m = Math.floor(uptime / 60), s = uptime % 60;
     document.getElementById('uptime').textContent = `${m}m ${s}s`;
+  } catch(e) {}
+}, 5000);
+
+setInterval(async () => {
+  try {
+    const r = await fetch('/studio/api/status');
+    const d = await r.json();
+    document.getElementById('runtime-role').textContent = d.runtime?.role || 'unknown';
+    document.getElementById('runtime-instance').textContent = d.runtime?.instance_name || 'unknown';
+    document.getElementById('runtime-session').textContent = d.runtime?.session_id || 'unknown';
+    document.getElementById('runtime-hot').textContent = String(d.runtime?.hot_state || false);
+    document.getElementById('conv-count').textContent = d.history?.conversation_count || 0;
+    document.getElementById('safety-count').textContent = d.history?.safety_count || 0;
+
+    const preview = document.getElementById('history-preview');
+    preview.innerHTML = '';
+    const items = d.history_preview || [];
+    items.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'event-row';
+      row.textContent = `${item.kind}: ${item.text}`;
+      preview.appendChild(row);
+    });
   } catch(e) {}
 }, 5000);
 </script>
@@ -232,7 +293,7 @@ async def studio_dashboard():
 
 
 @router.get("/api/status")
-async def studio_status(request):
+async def studio_status(request: Request):
     """Get current system status for Studio."""
     nova = request.app.state.nova
     hot_summary = {}
@@ -241,8 +302,16 @@ async def studio_status(request):
         hot_summary = await nova.hot_session.get_session() or {}
     bus_stats = nova.bus.stats() if getattr(nova, "bus", None) else {}
     if getattr(nova, "postgres_store", None):
-        history["conversation_count"] = len(await nova.postgres_store.list_conversation_turns(limit=20))
-        history["safety_count"] = len(await nova.postgres_store.list_safety_events(limit=20))
+        conversations = await nova.postgres_store.list_conversation_turns(limit=20)
+        safety = await nova.postgres_store.list_safety_events(limit=20)
+        history["conversation_count"] = len(conversations)
+        history["safety_count"] = len(safety)
+        history_preview = (
+            [{"kind": "conversation", "text": item.get("text_content", "")[:80]} for item in conversations[:5]]
+            + [{"kind": "safety", "text": item.get("category", "")[:80]} for item in safety[:5]]
+        )[:8]
+    else:
+        history_preview = []
     return JSONResponse({
         "status": "ok",
         "character": nova.personality.character_name if nova.personality else "NOVA",
@@ -255,4 +324,5 @@ async def studio_status(request):
         "bus": bus_stats,
         "summary": hot_summary,
         "history": history,
+        "history_preview": history_preview,
     })
