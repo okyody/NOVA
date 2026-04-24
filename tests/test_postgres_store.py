@@ -15,6 +15,31 @@ class _FakeConn:
     async def execute(self, query, *args):
         self.calls.append((query, args))
 
+    async def fetch(self, query, *args):
+        self.calls.append((query, args))
+        if "conversation_turns" in query:
+            return [{
+                "id": "evt-1",
+                "event_type": "platform.chat_message",
+                "source": "bilibili",
+                "trace_id": "trace-1",
+                "ts": datetime.utcnow(),
+                "role": "viewer",
+                "viewer_id": "v1",
+                "viewer_name": "alice",
+                "text_content": "hello",
+                "payload_json": {},
+            }]
+        return [{
+            "id": "evt-2",
+            "trace_id": "trace-2",
+            "ts": datetime.utcnow(),
+            "category": "self_harm",
+            "reason": "pattern",
+            "blocked_text": "x",
+            "payload_json": {},
+        }]
+
 
 class _Acquire:
     def __init__(self, conn):
@@ -75,3 +100,21 @@ async def test_postgres_store_persists_safety_event():
 
     assert len(store._pool.calls) == 1
     assert "safety_events" in store._pool.calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_lists_conversation_turns():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+
+    rows = await store.list_conversation_turns(limit=10)
+    assert rows[0]["id"] == "evt-1"
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_lists_safety_events():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+
+    rows = await store.list_safety_events(limit=10)
+    assert rows[0]["id"] == "evt-2"

@@ -275,6 +275,8 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
         client = self._client_or_raise()
         stream_length = 0
         dlq_length = 0
+        consumer_lag = 0
+        pending_count = self._last_pending_count
         try:
             stream_length = await client.xlen(self._stream)
         except Exception:
@@ -283,9 +285,20 @@ class RedisStreamsEventTransportBackend(EventTransportBackend):
             dlq_length = await client.xlen(self._dlq_stream)
         except Exception:
             pass
+        try:
+            groups = await client.xinfo_groups(self._stream)
+            for group in groups:
+                name = group.get("name") or group.get(b"name")
+                if name == self._consumer_group:
+                    consumer_lag = int(group.get("lag") or group.get(b"lag") or 0)
+                    pending_count = int(group.get("pending") or group.get(b"pending") or pending_count)
+                    break
+        except Exception:
+            pass
         return {
             "stream_length": int(stream_length),
-            "pending": int(self._last_pending_count),
+            "pending": int(pending_count),
+            "consumer_lag": int(consumer_lag),
             "dlq_length": int(dlq_length),
             "retries_total": int(self._retries_total),
             "reclaimed_total": int(self._reclaimed_total),

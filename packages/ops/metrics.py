@@ -140,6 +140,11 @@ if HAS_PROMETHEUS:
         "EventBus external stream length",
         registry=_registry,
     )
+    eventbus_consumer_lag = Gauge(
+        "nova_eventbus_consumer_lag",
+        "EventBus consumer lag for external transport",
+        registry=_registry,
+    )
     eventbus_dlq_length = Gauge(
         "nova_eventbus_dlq_length",
         "EventBus dead-letter stream length",
@@ -232,6 +237,10 @@ class MetricsCollector:
     def set_eventbus_stream_length(self, count: int) -> None:
         if self._enabled:
             eventbus_stream_length.set(count)
+
+    def set_eventbus_consumer_lag(self, count: int) -> None:
+        if self._enabled:
+            eventbus_consumer_lag.set(count)
 
     def set_eventbus_dlq_length(self, count: int) -> None:
         if self._enabled:

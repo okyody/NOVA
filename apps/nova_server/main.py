@@ -653,6 +653,7 @@ async def health(request: Request):
     return JSONResponse({
         "status": "ok",
         "version": "2.0.0",
+        "role": nova.settings.runtime.role,
         "character": nova.personality.character_name if nova.personality else "—",
         "bus": bus_stats,
         "safety": safety_stats,
@@ -683,6 +684,7 @@ async def metrics(request: Request):
     stats = nova.bus.stats() if nova.bus else {}
     nova.metrics.set_queue_depth(stats.get("queue_depth", 0))
     nova.metrics.set_eventbus_pending(stats.get("pending", 0))
+    nova.metrics.set_eventbus_consumer_lag(stats.get("consumer_lag", 0))
     nova.metrics.set_eventbus_stream_length(stats.get("stream_length", 0))
     nova.metrics.set_eventbus_dlq_length(stats.get("dlq_length", 0))
     nova.metrics.set_eventbus_retries_total(stats.get("retries_total", 0))
@@ -749,6 +751,26 @@ async def knowledge_stats(request: Request):
     sources = nova.knowledge_base.list_sources()
     count = await nova.knowledge_base.count()
     return {"total_documents": count, "sources": sources}
+
+
+@app.get("/api/runtime/history/conversation")
+async def runtime_conversation_history(request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    limit = int(request.query_params.get("limit", "100"))
+    rows = await nova.postgres_store.list_conversation_turns(limit=limit)
+    return {"status": "ok", "count": len(rows), "items": rows}
+
+
+@app.get("/api/runtime/history/safety")
+async def runtime_safety_history(request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    limit = int(request.query_params.get("limit", "100"))
+    rows = await nova.postgres_store.list_safety_events(limit=limit)
+    return {"status": "ok", "count": len(rows), "items": rows}
 
 
 @app.get("/api/runtime/hot-state")
@@ -878,6 +900,8 @@ def attach_runtime_routes(target_app: FastAPI) -> FastAPI:
     target_app.add_api_route("/api/config/reload", reload_config, methods=["POST"])
     target_app.add_api_route("/api/knowledge/ingest", ingest_knowledge, methods=["POST"])
     target_app.add_api_route("/api/knowledge/stats", knowledge_stats, methods=["GET"])
+    target_app.add_api_route("/api/runtime/history/conversation", runtime_conversation_history, methods=["GET"])
+    target_app.add_api_route("/api/runtime/history/safety", runtime_safety_history, methods=["GET"])
     target_app.add_api_route("/api/auth/token", create_token, methods=["POST"])
     target_app.add_api_route("/api/runtime/hot-state", runtime_hot_state, methods=["GET"])
     target_app.add_api_route("/api/runtime/sessions", runtime_sessions, methods=["GET"])

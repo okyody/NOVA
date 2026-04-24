@@ -238,13 +238,16 @@ async def studio_status(request):
     hot_summary = {}
     if getattr(nova, "hot_session", None):
         hot_summary = await nova.hot_session.get_session() or {}
+    bus_stats = nova.bus.stats() if getattr(nova, "bus", None) else {}
     return JSONResponse({
         "status": "ok",
         "character": nova.personality.character_name if nova.personality else "NOVA",
         "runtime": {
+            "role": nova.settings.runtime.role,
             "instance_name": nova.settings.runtime.instance_name,
             "session_id": nova.settings.runtime.session_id,
             "hot_state": nova.hot_state is not None,
         },
+        "bus": bus_stats,
         "summary": hot_summary,
     })

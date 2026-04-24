@@ -126,3 +126,33 @@ class PostgresRuntimeStore:
                 payload.get("blocked_text"),
                 json.dumps(payload, ensure_ascii=False, default=str),
             )
+
+    async def list_conversation_turns(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, event_type, source, trace_id, ts, role, viewer_id, viewer_name, text_content, payload_json
+                from "{self._schema}".conversation_turns
+                order by ts desc
+                limit $1
+                ''',
+                limit,
+            )
+        return [dict(r) for r in rows]
+
+    async def list_safety_events(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, trace_id, ts, category, reason, blocked_text, payload_json
+                from "{self._schema}".safety_events
+                order by ts desc
+                limit $1
+                ''',
+                limit,
+            )
+        return [dict(r) for r in rows]
