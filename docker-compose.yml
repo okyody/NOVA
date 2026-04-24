@@ -15,6 +15,9 @@ services:
       NOVA_PERSIST__ENABLED: "true"
       NOVA_PERSIST__BACKEND: redis
       NOVA_PERSIST__REDIS_URL: redis://redis:6379
+      NOVA_PERSIST__POSTGRES_URL: postgresql://nova:nova@postgres:5432/nova
+      NOVA_PERSIST__PERSIST_CONVERSATIONS: "true"
+      NOVA_PERSIST__PERSIST_SAFETY: "true"
       NOVA_RUNTIME__HOT_STATE_ENABLED: "true"
       NOVA_RUNTIME__EVENT_BUS_MODE: local
       NOVA_RUNTIME__EVENT_BUS_BACKEND: memory
@@ -48,6 +51,9 @@ services:
       NOVA_PERSIST__ENABLED: "true"
       NOVA_PERSIST__BACKEND: redis
       NOVA_PERSIST__REDIS_URL: redis://redis:6379
+      NOVA_PERSIST__POSTGRES_URL: postgresql://nova:nova@postgres:5432/nova
+      NOVA_PERSIST__PERSIST_CONVERSATIONS: "true"
+      NOVA_PERSIST__PERSIST_SAFETY: "true"
       NOVA_RUNTIME__HOT_STATE_ENABLED: "true"
     volumes:
       - ./nova.config.json:/app/nova.config.json:ro
@@ -82,6 +88,7 @@ services:
       NOVA_PERSIST__ENABLED: "true"
       NOVA_PERSIST__BACKEND: redis
       NOVA_PERSIST__REDIS_URL: redis://redis:6379
+      NOVA_PERSIST__POSTGRES_URL: postgresql://nova:nova@postgres:5432/nova
       NOVA_RUNTIME__HOT_STATE_ENABLED: "true"
     volumes:
       - ./nova.config.json:/app/nova.config.json:ro
@@ -92,6 +99,7 @@ services:
       - redis
       - ollama
       - qdrant
+      - postgres
     restart: unless-stopped
 
   nova-generation:
@@ -110,6 +118,7 @@ services:
       NOVA_PERSIST__ENABLED: "true"
       NOVA_PERSIST__BACKEND: redis
       NOVA_PERSIST__REDIS_URL: redis://redis:6379
+      NOVA_PERSIST__POSTGRES_URL: postgresql://nova:nova@postgres:5432/nova
       NOVA_RUNTIME__HOT_STATE_ENABLED: "true"
     volumes:
       - ./nova.config.json:/app/nova.config.json:ro
@@ -118,12 +127,26 @@ services:
       - nova_state:/app/data/state
     depends_on:
       - redis
+      - postgres
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nova
+      POSTGRES_PASSWORD: nova
+      POSTGRES_DB: nova
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/tools/init_postgres.sql:/docker-entrypoint-initdb.d/init_postgres.sql:ro
     restart: unless-stopped
 
   ollama:
@@ -172,3 +195,4 @@ volumes:
   grafana_data:
   prometheus_data:
   nova_state:
+  postgres_data:

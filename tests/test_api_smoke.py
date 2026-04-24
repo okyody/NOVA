@@ -45,10 +45,10 @@ def test_runtime_history_endpoints_with_fake_postgres_store() -> None:
     app = attach_runtime_routes(app)
 
     class _FakeStore:
-        async def list_conversation_turns(self, *, limit: int = 100):
+        async def list_conversation_turns(self, *, limit: int = 100, offset: int = 0, trace_id=None, session_id=None):
             return [{"id": "evt-1", "text_content": "hello"}]
 
-        async def list_safety_events(self, *, limit: int = 100):
+        async def list_safety_events(self, *, limit: int = 100, offset: int = 0, trace_id=None, session_id=None, category=None):
             return [{"id": "evt-2", "category": "self_harm"}]
 
         async def stop(self):
@@ -57,8 +57,8 @@ def test_runtime_history_endpoints_with_fake_postgres_store() -> None:
     app.state.nova.postgres_store = _FakeStore()
 
     with TestClient(app) as client:
-        turns = client.get("/api/runtime/history/conversation")
-        safety = client.get("/api/runtime/history/safety")
+        turns = client.get("/api/runtime/history/conversation?limit=10&offset=0&trace_id=trace-1&session_id=primary")
+        safety = client.get("/api/runtime/history/safety?limit=10&offset=0&trace_id=trace-2&session_id=primary&category=self_harm")
 
     assert turns.status_code == 200
     assert turns.json()["count"] == 1

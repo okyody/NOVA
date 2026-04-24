@@ -485,6 +485,15 @@ class NovaApp:
                     await self.hot_projector.project_event(event.type.value, event.payload)
                 if self.hot_session:
                     await self.hot_session.project_event(event.event_id, event.type.value, event.payload)
+                    if self.postgres_store:
+                        summary = await self.hot_session.get_session() or {}
+                        await self.postgres_store.upsert_runtime_session(summary, status="running")
+                        viewer = event.payload.get("viewer") or {}
+                        viewer_id = str(viewer.get("viewer_id", "")).strip()
+                        if viewer_id:
+                            viewer_state = await self.hot_session.get_viewer(viewer_id)
+                            if viewer_state:
+                                await self.postgres_store.upsert_runtime_viewer(viewer_id, viewer_state)
 
             if self.bus:
                 for et in (
@@ -501,6 +510,8 @@ class NovaApp:
             self.postgres_store = PostgresRuntimeStore(
                 persist.postgres_url,
                 schema=persist.postgres_schema,
+                runtime_instance=runtime_cfg.instance_name,
+                session_id=runtime_cfg.session_id,
                 persist_conversations=persist.persist_conversations,
                 persist_safety=persist.persist_safety,
             )
@@ -515,6 +526,16 @@ class NovaApp:
                 self.bus.subscribe(EventType.SAFE_OUTPUT, _persist_runtime_event, sub_id="pg_safe_output")
             if persist.persist_safety:
                 self.bus.subscribe(EventType.SAFETY_BLOCK, _persist_runtime_event, sub_id="pg_safety_block")
+
+            if self.hot_session and self._hot_session_started:
+                summary = await self.hot_session.get_session() or {}
+                await self.postgres_store.upsert_runtime_session(summary, status="running")
+                await self.postgres_store.write_audit_log(
+                    "runtime_session_started",
+                    "runtime_session",
+                    summary,
+                    resource_id=runtime_cfg.session_id,
+                )
 
         log.info(
             "NOVA started. Character: %s | LLM: %s | KB: %s | NLU: %s | Tools: %s | "
@@ -559,6 +580,14 @@ class NovaApp:
         if self.embedder and hasattr(self.embedder, "close"):
             await self.embedder.close()
         if self.postgres_store:
+            if self.hot_session and self._hot_session_started:
+                await self.postgres_store.stop_runtime_session()
+                await self.postgres_store.write_audit_log(
+                    "runtime_session_stopped",
+                    "runtime_session",
+                    {"session_id": self.settings.runtime.session_id},
+                    resource_id=self.settings.runtime.session_id,
+                )
             await self.postgres_store.stop()
         if self.hot_session and self._hot_session_started:
             await self.hot_session.mark_session_stopped()
@@ -656,6 +685,12 @@ async def health(request: Request):
         "role": nova.settings.runtime.role,
         "character": nova.personality.character_name if nova.personality else "—",
         "bus": bus_stats,
+        "eventbus": {
+            "pending": bus_stats.get("pending", 0),
+            "lag": bus_stats.get("consumer_lag", 0),
+            "retries": bus_stats.get("retries_total", 0),
+            "dlq_length": bus_stats.get("dlq_length", 0),
+        },
         "safety": safety_stats,
         "platforms": platform_status,
         "avatar_clients": nova.avatar.client_count if nova.avatar else 0,
@@ -759,7 +794,15 @@ async def runtime_conversation_history(request: Request):
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
     limit = int(request.query_params.get("limit", "100"))
-    rows = await nova.postgres_store.list_conversation_turns(limit=limit)
+    offset = int(request.query_params.get("offset", "0"))
+    trace_id = request.query_params.get("trace_id")
+    session_id = request.query_params.get("session_id")
+    rows = await nova.postgres_store.list_conversation_turns(
+        limit=limit,
+        offset=offset,
+        trace_id=trace_id,
+        session_id=session_id,
+    )
     return {"status": "ok", "count": len(rows), "items": rows}
 
 
@@ -769,7 +812,17 @@ async def runtime_safety_history(request: Request):
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
     limit = int(request.query_params.get("limit", "100"))
-    rows = await nova.postgres_store.list_safety_events(limit=limit)
+    offset = int(request.query_params.get("offset", "0"))
+    trace_id = request.query_params.get("trace_id")
+    session_id = request.query_params.get("session_id")
+    category = request.query_params.get("category")
+    rows = await nova.postgres_store.list_safety_events(
+        limit=limit,
+        offset=offset,
+        trace_id=trace_id,
+        session_id=session_id,
+        category=category,
+    )
     return {"status": "ok", "count": len(rows), "items": rows}
 
 

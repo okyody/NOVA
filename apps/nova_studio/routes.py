@@ -236,9 +236,13 @@ async def studio_status(request):
     """Get current system status for Studio."""
     nova = request.app.state.nova
     hot_summary = {}
+    history = {"conversation_count": 0, "safety_count": 0}
     if getattr(nova, "hot_session", None):
         hot_summary = await nova.hot_session.get_session() or {}
     bus_stats = nova.bus.stats() if getattr(nova, "bus", None) else {}
+    if getattr(nova, "postgres_store", None):
+        history["conversation_count"] = len(await nova.postgres_store.list_conversation_turns(limit=20))
+        history["safety_count"] = len(await nova.postgres_store.list_safety_events(limit=20))
     return JSONResponse({
         "status": "ok",
         "character": nova.personality.character_name if nova.personality else "NOVA",
@@ -250,4 +254,5 @@ async def studio_status(request):
         },
         "bus": bus_stats,
         "summary": hot_summary,
+        "history": history,
     })

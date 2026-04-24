@@ -20,6 +20,8 @@ class _FakeConn:
         if "conversation_turns" in query:
             return [{
                 "id": "evt-1",
+                "runtime_instance": "nova",
+                "session_id": "primary",
                 "event_type": "platform.chat_message",
                 "source": "bilibili",
                 "trace_id": "trace-1",
@@ -32,6 +34,8 @@ class _FakeConn:
             }]
         return [{
             "id": "evt-2",
+            "runtime_instance": "nova",
+            "session_id": "primary",
             "trace_id": "trace-2",
             "ts": datetime.utcnow(),
             "category": "self_harm",
@@ -112,9 +116,30 @@ async def test_postgres_store_lists_conversation_turns():
 
 
 @pytest.mark.asyncio
+async def test_postgres_store_lists_conversation_turns_with_filters():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+
+    rows = await store.list_conversation_turns(limit=10, offset=5, trace_id="trace-1", session_id="primary")
+    assert rows[0]["session_id"] == "primary"
+
+
+@pytest.mark.asyncio
 async def test_postgres_store_lists_safety_events():
     store = PostgresRuntimeStore("postgresql://test")
     store._pool = _FakePool()
 
     rows = await store.list_safety_events(limit=10)
     assert rows[0]["id"] == "evt-2"
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_upserts_session_and_viewer_and_audit():
+    store = PostgresRuntimeStore("postgresql://test", runtime_instance="nova", session_id="primary")
+    store._pool = _FakePool()
+
+    await store.upsert_runtime_session({"role": "cognitive", "character": "Nova", "llm_model": "qwen"})
+    await store.upsert_runtime_viewer("v1", {"platform": "bilibili", "username": "alice", "interaction_count": 1})
+    await store.write_audit_log("runtime_session_started", "runtime_session", {"session_id": "primary"}, resource_id="primary")
+
+    assert len(store._pool.calls) == 3

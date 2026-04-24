@@ -52,6 +52,12 @@ spec:
               value: redis
             - name: NOVA_PERSIST__REDIS_URL
               value: redis://redis:6379
+            - name: NOVA_PERSIST__POSTGRES_URL
+              value: postgresql://nova:nova@postgres:5432/nova
+            - name: NOVA_PERSIST__PERSIST_CONVERSATIONS
+              value: "true"
+            - name: NOVA_PERSIST__PERSIST_SAFETY
+              value: "true"
             - name: NOVA_AUTH__ENABLED
               value: "true"
             - name: NOVA_AUTH__JWT_SECRET
@@ -200,7 +206,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: nova-config
-data:
+  data:
   nova.config.json: |
     {
       "llm": {
@@ -214,7 +220,10 @@ data:
       },
       "persistence": {
         "enabled": true,
-        "backend": "redis"
+        "backend": "redis",
+        "postgres_url": "postgresql://nova:nova@postgres:5432/nova",
+        "persist_conversations": true,
+        "persist_safety": true
       }
     }
 ---
@@ -231,3 +240,86 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: nova
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              value: nova
+            - name: POSTGRES_PASSWORD
+              value: nova
+            - name: POSTGRES_DB
+              value: nova
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-init
+              mountPath: /docker-entrypoint-initdb.d/init_postgres.sql
+              subPath: init_postgres.sql
+      volumes:
+        - name: postgres-data
+          emptyDir: {}
+        - name: postgres-init
+          configMap:
+            name: nova-postgres-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nova-postgres-init
+data:
+  init_postgres.sql: |
+    create schema if not exists public;
+    create table if not exists public.conversation_turns (
+      id text primary key,
+      runtime_instance text not null,
+      session_id text not null,
+      event_type text not null,
+      source text not null,
+      trace_id text,
+      ts timestamptz not null,
+      role text not null,
+      viewer_id text,
+      viewer_name text,
+      text_content text,
+      payload_json jsonb not null default '{}'::jsonb
+    );
+    create table if not exists public.safety_events (
+      id text primary key,
+      runtime_instance text not null,
+      session_id text not null,
+      trace_id text,
+      ts timestamptz not null,
+      category text not null,
+      reason text,
+      blocked_text text,
+      payload_json jsonb not null default '{}'::jsonb
+    );
