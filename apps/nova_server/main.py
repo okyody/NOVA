@@ -47,6 +47,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 # ── Logging (must be first!) ──────────────────────────────────────────────────
 from packages.core.logger import setup_logging, get_logger, bind_trace_id
+from apps.nova_runtime.bootstrap import build_role_plan
 from packages.core.config import NovaSettings, load_settings
 
 # ── Component imports ─────────────────────────────────────────────────────────
@@ -134,12 +135,13 @@ class NovaApp:
         cfg = self.settings
         log = get_logger("nova.server")
         runtime_cfg = cfg.runtime
-        role = runtime_cfg.role
-        run_bus = role in {"all", "perception", "cognitive", "generation"}
-        run_perception = role in {"all", "perception"}
-        run_cognitive = role in {"all", "cognitive"}
-        run_generation = role in {"all", "generation"}
-        run_platform_ingress = role in {"all", "perception"}
+        role_plan = build_role_plan(runtime_cfg.role)
+        role = role_plan.role
+        run_bus = role_plan.run_bus
+        run_perception = role_plan.run_perception
+        run_cognitive = role_plan.run_cognitive
+        run_generation = role_plan.run_generation
+        run_platform_ingress = role_plan.run_platform_ingress
 
         log.info("═══════════════════════════════════")
         log.info("  NOVA — Next-gen Omnimodal Virtual Agent")
@@ -826,6 +828,45 @@ async def runtime_safety_history(request: Request):
     return {"status": "ok", "count": len(rows), "items": rows}
 
 
+@app.get("/api/runtime/storage/sessions")
+async def runtime_storage_sessions(request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    limit = int(request.query_params.get("limit", "100"))
+    offset = int(request.query_params.get("offset", "0"))
+    status = request.query_params.get("status")
+    role = request.query_params.get("role")
+    rows = await nova.postgres_store.list_runtime_sessions(limit=limit, offset=offset, status=status, role=role)
+    return {"status": "ok", "count": len(rows), "items": rows}
+
+
+@app.get("/api/runtime/storage/viewers")
+async def runtime_storage_viewers(request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    limit = int(request.query_params.get("limit", "100"))
+    offset = int(request.query_params.get("offset", "0"))
+    session_id = request.query_params.get("session_id")
+    platform = request.query_params.get("platform")
+    rows = await nova.postgres_store.list_runtime_viewers(limit=limit, offset=offset, session_id=session_id, platform=platform)
+    return {"status": "ok", "count": len(rows), "items": rows}
+
+
+@app.get("/api/runtime/storage/audit")
+async def runtime_storage_audit(request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    limit = int(request.query_params.get("limit", "100"))
+    offset = int(request.query_params.get("offset", "0"))
+    action = request.query_params.get("action")
+    resource_type = request.query_params.get("resource_type")
+    rows = await nova.postgres_store.list_audit_logs(limit=limit, offset=offset, action=action, resource_type=resource_type)
+    return {"status": "ok", "count": len(rows), "items": rows}
+
+
 @app.get("/api/runtime/hot-state")
 async def runtime_hot_state(request: Request):
     nova = request.app.state.nova
@@ -955,6 +996,9 @@ def attach_runtime_routes(target_app: FastAPI) -> FastAPI:
     target_app.add_api_route("/api/knowledge/stats", knowledge_stats, methods=["GET"])
     target_app.add_api_route("/api/runtime/history/conversation", runtime_conversation_history, methods=["GET"])
     target_app.add_api_route("/api/runtime/history/safety", runtime_safety_history, methods=["GET"])
+    target_app.add_api_route("/api/runtime/storage/sessions", runtime_storage_sessions, methods=["GET"])
+    target_app.add_api_route("/api/runtime/storage/viewers", runtime_storage_viewers, methods=["GET"])
+    target_app.add_api_route("/api/runtime/storage/audit", runtime_storage_audit, methods=["GET"])
     target_app.add_api_route("/api/auth/token", create_token, methods=["POST"])
     target_app.add_api_route("/api/runtime/hot-state", runtime_hot_state, methods=["GET"])
     target_app.add_api_route("/api/runtime/sessions", runtime_sessions, methods=["GET"])

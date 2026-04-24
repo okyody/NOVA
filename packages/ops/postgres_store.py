@@ -346,3 +346,102 @@ class PostgresRuntimeStore:
                 *args,
             )
         return [dict(r) for r in rows]
+
+    async def list_runtime_sessions(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        status: str | None = None,
+        role: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        clauses = []
+        args: list[Any] = []
+        if status:
+            args.append(status)
+            clauses.append(f"status = ${len(args)}")
+        if role:
+            args.append(role)
+            clauses.append(f"role = ${len(args)}")
+        where_sql = f"where {' and '.join(clauses)}" if clauses else ""
+        args.extend([limit, offset])
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, runtime_instance, status, role, character, llm_model, started_at, stopped_at, last_activity_at, summary_json
+                from "{self._schema}".runtime_sessions
+                {where_sql}
+                order by started_at desc
+                limit ${len(args)-1} offset ${len(args)}
+                ''',
+                *args,
+            )
+        return [dict(r) for r in rows]
+
+    async def list_runtime_viewers(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        session_id: str | None = None,
+        platform: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        clauses = []
+        args: list[Any] = []
+        if session_id:
+            args.append(session_id)
+            clauses.append(f"session_id = ${len(args)}")
+        if platform:
+            args.append(platform)
+            clauses.append(f"platform = ${len(args)}")
+        where_sql = f"where {' and '.join(clauses)}" if clauses else ""
+        args.extend([limit, offset])
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, runtime_instance, session_id, platform, username, is_member, gift_total, interaction_count, last_seen_at, last_event_type, last_message, payload_json
+                from "{self._schema}".runtime_viewers
+                {where_sql}
+                order by last_seen_at desc nulls last
+                limit ${len(args)-1} offset ${len(args)}
+                ''',
+                *args,
+            )
+        return [dict(r) for r in rows]
+
+    async def list_audit_logs(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        action: str | None = None,
+        resource_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        clauses = []
+        args: list[Any] = []
+        if action:
+            args.append(action)
+            clauses.append(f"action = ${len(args)}")
+        if resource_type:
+            args.append(resource_type)
+            clauses.append(f"resource_type = ${len(args)}")
+        where_sql = f"where {' and '.join(clauses)}" if clauses else ""
+        args.extend([limit, offset])
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, runtime_instance, ts, action, resource_type, resource_id, detail_json
+                from "{self._schema}".audit_logs
+                {where_sql}
+                order by ts desc
+                limit ${len(args)-1} offset ${len(args)}
+                ''',
+                *args,
+            )
+        return [dict(r) for r in rows]

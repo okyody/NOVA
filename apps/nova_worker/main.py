@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import os
 import signal
-import socket
 import sys
 from pathlib import Path
 
@@ -15,29 +14,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-
-def _configure_role(role: str) -> None:
-    os.environ["NOVA_RUNTIME__ROLE"] = role
-    os.environ.setdefault("NOVA_RUNTIME__EVENT_BUS_MODE", "external_consumer")
-    os.environ.setdefault("NOVA_RUNTIME__EVENT_BUS_BACKEND", "redis_streams")
-    os.environ.setdefault("NOVA_PERSIST__ENABLED", "true")
-    os.environ.setdefault("NOVA_PERSIST__BACKEND", "redis")
-
-    hostname = socket.gethostname().lower().replace(".", "-")
-    consumer_group_map = {
-        "perception": "nova-perception",
-        "cognitive": "nova-cognitive",
-        "generation": "nova-generation",
-    }
-    group = consumer_group_map.get(role, "nova-workers")
-    os.environ.setdefault("NOVA_RUNTIME__EVENT_BUS_CONSUMER_GROUP", group)
-    os.environ.setdefault("NOVA_RUNTIME__EVENT_BUS_CONSUMER_NAME", f"{group}-{hostname}")
-    os.environ.setdefault("NOVA_RUNTIME__INSTANCE_NAME", f"{role}-{hostname}")
-    os.environ.setdefault("NOVA_RUNTIME__SESSION_ID", "primary")
+from apps.nova_runtime.bootstrap import configure_worker_environment
 
 
 async def _run(role: str) -> None:
-    _configure_role(role)
+    configure_worker_environment(role)
 
     from packages.core.config import load_settings
     from apps.nova_server.main import NovaApp

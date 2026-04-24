@@ -32,16 +32,54 @@ class _FakeConn:
                 "text_content": "hello",
                 "payload_json": {},
             }]
+        if "safety_events" in query:
+            return [{
+                "id": "evt-2",
+                "runtime_instance": "nova",
+                "session_id": "primary",
+                "trace_id": "trace-2",
+                "ts": datetime.utcnow(),
+                "category": "self_harm",
+                "reason": "pattern",
+                "blocked_text": "x",
+                "payload_json": {},
+            }]
+        if "runtime_sessions" in query:
+            return [{
+                "id": "primary",
+                "runtime_instance": "nova",
+                "status": "running",
+                "role": "cognitive",
+                "character": "Nova",
+                "llm_model": "qwen",
+                "started_at": datetime.utcnow(),
+                "stopped_at": None,
+                "last_activity_at": datetime.utcnow(),
+                "summary_json": {},
+            }]
+        if "runtime_viewers" in query:
+            return [{
+                "id": "v1",
+                "runtime_instance": "nova",
+                "session_id": "primary",
+                "platform": "bilibili",
+                "username": "alice",
+                "is_member": False,
+                "gift_total": 0.0,
+                "interaction_count": 1,
+                "last_seen_at": datetime.utcnow(),
+                "last_event_type": "platform.chat_message",
+                "last_message": "hello",
+                "payload_json": {},
+            }]
         return [{
-            "id": "evt-2",
+            "id": "audit-1",
             "runtime_instance": "nova",
-            "session_id": "primary",
-            "trace_id": "trace-2",
             "ts": datetime.utcnow(),
-            "category": "self_harm",
-            "reason": "pattern",
-            "blocked_text": "x",
-            "payload_json": {},
+            "action": "runtime_session_started",
+            "resource_type": "runtime_session",
+            "resource_id": "primary",
+            "detail_json": {},
         }]
 
 
@@ -143,3 +181,27 @@ async def test_postgres_store_upserts_session_and_viewer_and_audit():
     await store.write_audit_log("runtime_session_started", "runtime_session", {"session_id": "primary"}, resource_id="primary")
 
     assert len(store._pool.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_lists_runtime_sessions():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+    rows = await store.list_runtime_sessions(limit=10, offset=0, status="running", role="cognitive")
+    assert rows[0]["id"] == "primary"
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_lists_runtime_viewers():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+    rows = await store.list_runtime_viewers(limit=10, offset=0, session_id="primary", platform="bilibili")
+    assert rows[0]["id"] == "v1"
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_lists_audit_logs():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+    rows = await store.list_audit_logs(limit=10, offset=0, action="runtime_session_started", resource_type="runtime_session")
+    assert rows[0]["id"] == "audit-1"
