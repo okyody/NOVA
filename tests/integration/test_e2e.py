@@ -69,6 +69,20 @@ class MockLLMClient:
         pass
 
 
+class SemanticTestEmbedder:
+    """Small deterministic embedder for semantic clustering tests."""
+
+    _vectors = {
+        "好棒": [1.0, 0.0, 0.0],
+        "太厉害了": [0.98, 0.02, 0.0],
+        "真强啊": [0.96, 0.04, 0.0],
+        "这个游戏太难了": [0.0, 1.0, 0.0],
+    }
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [self._vectors.get(text, [0.0, 0.0, 1.0]) for text in texts]
+
+
 # ── Helper ───────────────────────────────────────────────────────────────────
 
 def _make_chat_event(text: str, username: str = "test_viewer", viewer_id: str = "v1") -> NovaEvent:
@@ -264,11 +278,16 @@ async def test_e2e_silence_detector():
 
 @pytest.mark.asyncio
 async def test_semantic_aggregator_clustering():
-    """SemanticAggregator clusters similar messages together."""
+    """SemanticAggregator uses embeddings to cluster semantically similar chat."""
     bus = EventBus(queue_size=1024)
     await bus.start()
 
-    aggregator = SemanticAggregator(bus, window_ms=200, similarity_threshold=0.3)
+    aggregator = SemanticAggregator(
+        bus,
+        window_ms=200,
+        similarity_threshold=0.92,
+        embedder=SemanticTestEmbedder(),
+    )
     await aggregator.start()
 
     clusters: list[NovaEvent] = []

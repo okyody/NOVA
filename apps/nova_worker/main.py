@@ -14,17 +14,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from apps.nova_runtime.bootstrap import configure_worker_environment
+from apps.nova_runtime.bootstrap import create_worker_app
 
 
 async def _run(role: str) -> None:
-    configure_worker_environment(role)
-
-    from packages.core.config import load_settings
-    from apps.nova_server.main import NovaApp
-
-    settings = load_settings()
-    app = NovaApp(settings)
+    app = create_worker_app(role)
 
     stop_event = asyncio.Event()
 

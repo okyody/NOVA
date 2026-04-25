@@ -57,6 +57,7 @@ STUDIO_HTML = """<!DOCTYPE html>
     <a href="#" onclick="showTab('dashboard')" class="text-xs text-white/60 hover:text-white/90 px-2 py-1 rounded hover:bg-white/5">Dashboard</a>
     <a href="#" onclick="showTab('events')" class="text-xs text-white/60 hover:text-white/90 px-2 py-1 rounded hover:bg-white/5">Events</a>
     <a href="#" onclick="showTab('config')" class="text-xs text-white/60 hover:text-white/90 px-2 py-1 rounded hover:bg-white/5">Config</a>
+    <a href="#" onclick="showTab('control')" class="text-xs text-white/60 hover:text-white/90 px-2 py-1 rounded hover:bg-white/5">Control</a>
     <div class="mt-auto text-[10px] text-white/30">v1.0.0</div>
   </div>
 
@@ -166,6 +167,68 @@ STUDIO_HTML = """<!DOCTYPE html>
         <div class="text-xs text-white/60" id="config-display">Loading…</div>
       </div>
     </div>
+
+    <!-- Control Tab -->
+    <div id="tab-control" style="display:none">
+      <div class="grid grid-cols-3 gap-4 mb-4">
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Create Tenant</div>
+          <div class="flex flex-col gap-2">
+            <input id="tenant-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="tenant id">
+            <input id="tenant-name" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="tenant name">
+            <input id="tenant-slug" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="tenant slug">
+            <input id="tenant-plan" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="plan (enterprise/pro)">
+            <button onclick="createTenant()" class="bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 rounded px-2 py-1 text-xs">Create Tenant</button>
+          </div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Create Role</div>
+          <div class="flex flex-col gap-2">
+            <input id="role-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="role id">
+            <input id="role-tenant-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="tenant id">
+            <input id="role-name" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="role name">
+            <input id="role-scope" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="scope (tenant/system)">
+            <input id="role-description" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="description">
+            <button onclick="createRole()" class="bg-teal-500/20 hover:bg-teal-500/30 text-teal-200 rounded px-2 py-1 text-xs">Create Role</button>
+          </div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Create Revision</div>
+          <div class="flex flex-col gap-2">
+            <input id="revision-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="revision id">
+            <input id="revision-tenant-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="tenant id">
+            <input id="revision-resource-type" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="resource type">
+            <input id="revision-resource-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="resource id">
+            <input id="revision-no" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="revision no">
+            <textarea id="revision-config-json" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs h-20" placeholder='{"key":"value"}'></textarea>
+            <div class="flex gap-2">
+              <button onclick="createRevision()" class="bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 rounded px-2 py-1 text-xs flex-1">Create Draft</button>
+              <button onclick="publishRevision()" class="bg-green-500/20 hover:bg-green-500/30 text-green-200 rounded px-2 py-1 text-xs flex-1">Publish</button>
+              <button onclick="rollbackRevision()" class="bg-red-500/20 hover:bg-red-500/30 text-red-200 rounded px-2 py-1 text-xs flex-1">Rollback</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-3 gap-4">
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Tenants</div>
+          <div id="tenant-list" class="max-h-[320px] overflow-auto text-xs text-white/70"></div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Roles</div>
+          <div id="role-list" class="max-h-[320px] overflow-auto text-xs text-white/70"></div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Config Revisions</div>
+          <div id="revision-list" class="max-h-[320px] overflow-auto text-xs text-white/70"></div>
+        </div>
+      </div>
+      <div class="card p-4 mt-4">
+        <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Control Log</div>
+        <div id="control-log" class="max-h-[180px] overflow-auto text-xs text-white/60"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -176,12 +239,20 @@ const MAX_EVENTS = 200;
 let startTime = Date.now();
 
 function showTab(name) {
-  ['dashboard','events','config'].forEach(t => {
+  ['dashboard','events','config','control'].forEach(t => {
     document.getElementById('tab-'+t).style.display = t===name ? '' : 'none';
   });
 }
 
 function clearEvents() { eventList.innerHTML = ''; }
+function controlLog(message) {
+  const log = document.getElementById('control-log');
+  const row = document.createElement('div');
+  row.className = 'event-row';
+  row.textContent = `${new Date().toLocaleTimeString()} ${message}`;
+  log.prepend(row);
+  while (log.children.length > 50) log.lastChild.remove();
+}
 
 function tagClass(type) {
   if (type.startsWith('platform.')) return 'tag-chat';
@@ -241,6 +312,125 @@ function updateHeat(p) {
 
 function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
 
+async function postJson(url, method, payload) {
+  const response = await fetch(url, {
+    method,
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload || {})
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.reason || data.status || 'request failed');
+  }
+  return data;
+}
+
+function renderList(elementId, items, fields) {
+  const target = document.getElementById(elementId);
+  target.innerHTML = '';
+  (items || []).forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'event-row';
+    row.textContent = fields.map((field) => `${field}: ${item[field] ?? ''}`).join(' | ');
+    target.appendChild(row);
+  });
+}
+
+async function refreshControlPlane() {
+  try {
+    const [tenants, roles, revisions] = await Promise.all([
+      fetch('/api/control/tenants?limit=20&offset=0').then(r => r.json()),
+      fetch('/api/control/roles?limit=20&offset=0').then(r => r.json()),
+      fetch('/api/control/config-revisions?limit=20&offset=0').then(r => r.json()),
+    ]);
+    renderList('tenant-list', tenants.items || [], ['id', 'slug', 'status', 'plan']);
+    renderList('role-list', roles.items || [], ['id', 'tenant_id', 'name', 'scope']);
+    renderList('revision-list', revisions.items || [], ['id', 'resource_type', 'resource_id', 'revision_no', 'status']);
+  } catch (err) {
+    controlLog(`refresh failed: ${err.message}`);
+  }
+}
+
+async function createTenant() {
+  try {
+    const payload = {
+      id: document.getElementById('tenant-id').value,
+      name: document.getElementById('tenant-name').value,
+      slug: document.getElementById('tenant-slug').value,
+      plan: document.getElementById('tenant-plan').value || 'enterprise',
+    };
+    const result = await postJson('/api/control/tenants', 'POST', payload);
+    controlLog(`tenant created: ${result.id}`);
+    await refreshControlPlane();
+  } catch (err) {
+    controlLog(`tenant create failed: ${err.message}`);
+  }
+}
+
+async function createRole() {
+  try {
+    const payload = {
+      id: document.getElementById('role-id').value,
+      tenant_id: document.getElementById('role-tenant-id').value,
+      name: document.getElementById('role-name').value,
+      scope: document.getElementById('role-scope').value,
+      description: document.getElementById('role-description').value,
+    };
+    const result = await postJson('/api/control/roles', 'POST', payload);
+    controlLog(`role created: ${result.id}`);
+    await refreshControlPlane();
+  } catch (err) {
+    controlLog(`role create failed: ${err.message}`);
+  }
+}
+
+function currentRevisionPayload() {
+  let config = {};
+  const raw = document.getElementById('revision-config-json').value.trim();
+  if (raw) config = JSON.parse(raw);
+  return {
+    id: document.getElementById('revision-id').value,
+    tenant_id: document.getElementById('revision-tenant-id').value,
+    resource_type: document.getElementById('revision-resource-type').value,
+    resource_id: document.getElementById('revision-resource-id').value,
+    revision_no: Number(document.getElementById('revision-no').value || '1'),
+    config_json: config,
+  };
+}
+
+async function createRevision() {
+  try {
+    const payload = currentRevisionPayload();
+    const result = await postJson('/api/control/config-revisions', 'POST', payload);
+    controlLog(`revision created: ${result.id}`);
+    await refreshControlPlane();
+  } catch (err) {
+    controlLog(`revision create failed: ${err.message}`);
+  }
+}
+
+async function publishRevision() {
+  try {
+    const revisionId = document.getElementById('revision-id').value;
+    const result = await postJson(`/api/control/config-revisions/${revisionId}/publish`, 'POST', {operator: 'studio'});
+    controlLog(`revision published: ${result.id}`);
+    await refreshControlPlane();
+  } catch (err) {
+    controlLog(`revision publish failed: ${err.message}`);
+  }
+}
+
+async function rollbackRevision() {
+  try {
+    const revisionId = document.getElementById('revision-id').value;
+    const result = await postJson(`/api/control/config-revisions/${revisionId}/rollback`, 'POST', {operator: 'studio'});
+    controlLog(`revision rolled back: ${result.id}`);
+    await refreshControlPlane();
+  } catch (err) {
+    controlLog(`revision rollback failed: ${err.message}`);
+  }
+}
+
 // Periodic health check
 setInterval(async () => {
   try {
@@ -281,6 +471,9 @@ setInterval(async () => {
     });
   } catch(e) {}
 }, 5000);
+
+setInterval(refreshControlPlane, 10000);
+refreshControlPlane();
 </script>
 </body>
 </html>"""

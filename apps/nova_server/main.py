@@ -142,6 +142,7 @@ class NovaApp:
         run_cognitive = role_plan.run_cognitive
         run_generation = role_plan.run_generation
         run_platform_ingress = role_plan.run_platform_ingress
+        kb = cfg.knowledge
 
         log.info("═══════════════════════════════════")
         log.info("  NOVA — Next-gen Omnimodal Virtual Agent")
@@ -184,7 +185,18 @@ class NovaApp:
         # 2. Perception layer
         perc = cfg.perception
         if run_perception and self.bus:
-            self.aggregator = SemanticAggregator(self.bus, window_ms=perc.aggregator_window_ms)
+            if self.embedder is None:
+                self.embedder = create_embedder({
+                    "backend": kb.embedding_backend,
+                    "base_url": kb.embedding_base_url,
+                    "model": kb.embedding_model,
+                    "api_key": kb.embedding_api_key.get_secret_value() if kb.embedding_api_key.get_secret_value() else "",
+                })
+            self.aggregator = SemanticAggregator(
+                self.bus,
+                window_ms=perc.aggregator_window_ms,
+                embedder=self.embedder,
+            )
             await self.aggregator.start()
 
             self.silence = SilenceDetector(self.bus, silence_sec=perc.silence_threshold_s)
@@ -194,14 +206,14 @@ class NovaApp:
             await self.context.start()
 
         # 3. Knowledge layer (optional — RAG)
-        kb = cfg.knowledge
         if run_cognitive and kb.enabled:
-            self.embedder = create_embedder({
-                "backend": kb.embedding_backend,
-                "base_url": kb.embedding_base_url,
-                "model": kb.embedding_model,
-                "api_key": kb.embedding_api_key.get_secret_value() if kb.embedding_api_key.get_secret_value() else "",
-            })
+            if self.embedder is None:
+                self.embedder = create_embedder({
+                    "backend": kb.embedding_backend,
+                    "base_url": kb.embedding_base_url,
+                    "model": kb.embedding_model,
+                    "api_key": kb.embedding_api_key.get_secret_value() if kb.embedding_api_key.get_secret_value() else "",
+                })
             self.vector_store = create_vector_store({
                 "backend": kb.vector_backend,
                 "url": kb.qdrant_url,
@@ -878,6 +890,40 @@ async def control_tenants(request: Request):
     return {"status": "ok", "count": len(rows), "items": rows}
 
 
+@app.post("/api/control/tenants")
+async def control_create_tenant(request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    body = await request.json()
+    tenant_id = body.get("id")
+    name = body.get("name")
+    slug = body.get("slug")
+    plan = body.get("plan", "enterprise")
+    if not tenant_id or not name or not slug:
+        return JSONResponse({"status": "validation_error", "reason": "id, name, slug required"}, status_code=400)
+    await nova.postgres_store.create_tenant(tenant_id, name, slug, plan)
+    await nova.postgres_store.write_audit_log("tenant_created", "tenant", body, resource_id=tenant_id)
+    return {"status": "ok", "id": tenant_id}
+
+
+@app.patch("/api/control/tenants/{tenant_id}")
+async def control_update_tenant(tenant_id: str, request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    body = await request.json()
+    await nova.postgres_store.update_tenant(
+        tenant_id,
+        name=body.get("name"),
+        slug=body.get("slug"),
+        status=body.get("status"),
+        plan=body.get("plan"),
+    )
+    await nova.postgres_store.write_audit_log("tenant_updated", "tenant", body, resource_id=tenant_id)
+    return {"status": "ok", "id": tenant_id}
+
+
 @app.get("/api/control/roles")
 async def control_roles(request: Request):
     nova = request.app.state.nova
@@ -888,6 +934,40 @@ async def control_roles(request: Request):
     offset = int(request.query_params.get("offset", "0"))
     rows = await nova.postgres_store.list_roles(tenant_id=tenant_id, limit=limit, offset=offset)
     return {"status": "ok", "count": len(rows), "items": rows}
+
+
+@app.post("/api/control/roles")
+async def control_create_role(request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    body = await request.json()
+    role_id = body.get("id")
+    tenant_id = body.get("tenant_id")
+    name = body.get("name")
+    scope = body.get("scope")
+    description = body.get("description", "")
+    if not role_id or not tenant_id or not name or not scope:
+        return JSONResponse({"status": "validation_error", "reason": "id, tenant_id, name, scope required"}, status_code=400)
+    await nova.postgres_store.create_role(role_id, tenant_id, name, scope, description)
+    await nova.postgres_store.write_audit_log("role_created", "role", body, resource_id=role_id)
+    return {"status": "ok", "id": role_id}
+
+
+@app.patch("/api/control/roles/{role_id}")
+async def control_update_role(role_id: str, request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    body = await request.json()
+    await nova.postgres_store.update_role(
+        role_id,
+        name=body.get("name"),
+        scope=body.get("scope"),
+        description=body.get("description"),
+    )
+    await nova.postgres_store.write_audit_log("role_updated", "role", body, resource_id=role_id)
+    return {"status": "ok", "id": role_id}
 
 
 @app.get("/api/control/config-revisions")
@@ -908,6 +988,59 @@ async def control_config_revisions(request: Request):
         offset=offset,
     )
     return {"status": "ok", "count": len(rows), "items": rows}
+
+
+@app.post("/api/control/config-revisions")
+async def control_create_config_revision(request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    body = await request.json()
+    revision_id = body.get("id")
+    tenant_id = body.get("tenant_id")
+    resource_type = body.get("resource_type")
+    resource_id = body.get("resource_id")
+    revision_no = body.get("revision_no")
+    config_json = body.get("config_json", {})
+    status = body.get("status", "draft")
+    if not revision_id or not tenant_id or not resource_type or not resource_id or revision_no is None:
+        return JSONResponse(
+            {"status": "validation_error", "reason": "id, tenant_id, resource_type, resource_id, revision_no required"},
+            status_code=400,
+        )
+    await nova.postgres_store.create_config_revision(
+        revision_id,
+        tenant_id,
+        resource_type,
+        resource_id,
+        int(revision_no),
+        config_json,
+        status=status,
+    )
+    await nova.postgres_store.write_audit_log("config_revision_created", "config_revision", body, resource_id=revision_id)
+    return {"status": "ok", "id": revision_id}
+
+
+@app.post("/api/control/config-revisions/{revision_id}/publish")
+async def control_publish_config_revision(revision_id: str, request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    body = await request.json() if request.headers.get("content-length") else {}
+    await nova.postgres_store.set_config_revision_status(revision_id, "published")
+    await nova.postgres_store.write_audit_log("config_revision_published", "config_revision", body, resource_id=revision_id)
+    return {"status": "ok", "id": revision_id, "revision_status": "published"}
+
+
+@app.post("/api/control/config-revisions/{revision_id}/rollback")
+async def control_rollback_config_revision(revision_id: str, request: Request):
+    nova = request.app.state.nova
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    body = await request.json() if request.headers.get("content-length") else {}
+    await nova.postgres_store.set_config_revision_status(revision_id, "rolled_back")
+    await nova.postgres_store.write_audit_log("config_revision_rolled_back", "config_revision", body, resource_id=revision_id)
+    return {"status": "ok", "id": revision_id, "revision_status": "rolled_back"}
 
 
 @app.get("/api/runtime/hot-state")
@@ -1043,8 +1176,15 @@ def attach_runtime_routes(target_app: FastAPI) -> FastAPI:
     target_app.add_api_route("/api/runtime/storage/viewers", runtime_storage_viewers, methods=["GET"])
     target_app.add_api_route("/api/runtime/storage/audit", runtime_storage_audit, methods=["GET"])
     target_app.add_api_route("/api/control/tenants", control_tenants, methods=["GET"])
+    target_app.add_api_route("/api/control/tenants", control_create_tenant, methods=["POST"])
+    target_app.add_api_route("/api/control/tenants/{tenant_id}", control_update_tenant, methods=["PATCH"])
     target_app.add_api_route("/api/control/roles", control_roles, methods=["GET"])
+    target_app.add_api_route("/api/control/roles", control_create_role, methods=["POST"])
+    target_app.add_api_route("/api/control/roles/{role_id}", control_update_role, methods=["PATCH"])
     target_app.add_api_route("/api/control/config-revisions", control_config_revisions, methods=["GET"])
+    target_app.add_api_route("/api/control/config-revisions", control_create_config_revision, methods=["POST"])
+    target_app.add_api_route("/api/control/config-revisions/{revision_id}/publish", control_publish_config_revision, methods=["POST"])
+    target_app.add_api_route("/api/control/config-revisions/{revision_id}/rollback", control_rollback_config_revision, methods=["POST"])
     target_app.add_api_route("/api/auth/token", create_token, methods=["POST"])
     target_app.add_api_route("/api/runtime/hot-state", runtime_hot_state, methods=["GET"])
     target_app.add_api_route("/api/runtime/sessions", runtime_sessions, methods=["GET"])

@@ -254,3 +254,19 @@ async def test_postgres_store_creates_and_lists_tenants_roles_and_revisions():
     assert tenants[0]["id"] == "tenant-1"
     assert roles[0]["id"] == "role-1"
     assert revisions[0]["id"] == "rev-1"
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_updates_control_plane_records():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+
+    await store.update_tenant("tenant-1", status="suspended", plan="pro")
+    await store.update_role("role-1", description="Updated role")
+    await store.update_config_revision("rev-1", status="draft", config_json={"foo": "bar"})
+    await store.set_config_revision_status("rev-1", "published")
+
+    queries = "\n".join(call[0] for call in store._pool.calls)
+    assert 'update "public".tenants' in queries
+    assert 'update "public".roles' in queries
+    assert 'update "public".config_revisions' in queries

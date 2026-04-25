@@ -506,6 +506,42 @@ class PostgresRuntimeStore:
                 plan,
             )
 
+    async def update_tenant(
+        self,
+        tenant_id: str,
+        *,
+        name: str | None = None,
+        slug: str | None = None,
+        status: str | None = None,
+        plan: str | None = None,
+    ) -> None:
+        if self._pool is None:
+            return
+        assignments = []
+        args: list[Any] = []
+        for column, value in (
+            ("name", name),
+            ("slug", slug),
+            ("status", status),
+            ("plan", plan),
+        ):
+            if value is not None:
+                args.append(value)
+                assignments.append(f"{column} = ${len(args)}")
+        if not assignments:
+            return
+        assignments.append("updated_at = now()")
+        args.append(tenant_id)
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''
+                update "{self._schema}".tenants
+                set {", ".join(assignments)}
+                where id = ${len(args)}
+                ''',
+                *args,
+            )
+
     async def list_tenants(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         if self._pool is None:
             return []
@@ -541,6 +577,40 @@ class PostgresRuntimeStore:
                 name,
                 scope,
                 description,
+            )
+
+    async def update_role(
+        self,
+        role_id: str,
+        *,
+        name: str | None = None,
+        scope: str | None = None,
+        description: str | None = None,
+    ) -> None:
+        if self._pool is None:
+            return
+        assignments = []
+        args: list[Any] = []
+        for column, value in (
+            ("name", name),
+            ("scope", scope),
+            ("description", description),
+        ):
+            if value is not None:
+                args.append(value)
+                assignments.append(f"{column} = ${len(args)}")
+        if not assignments:
+            return
+        assignments.append("updated_at = now()")
+        args.append(role_id)
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''
+                update "{self._schema}".roles
+                set {", ".join(assignments)}
+                where id = ${len(args)}
+                ''',
+                *args,
             )
 
     async def list_roles(self, *, tenant_id: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
@@ -595,6 +665,50 @@ class PostgresRuntimeStore:
                 revision_no,
                 status,
                 json.dumps(config_json, ensure_ascii=False, default=str),
+            )
+
+    async def update_config_revision(
+        self,
+        revision_id: str,
+        *,
+        config_json: dict[str, Any] | None = None,
+        status: str | None = None,
+    ) -> None:
+        if self._pool is None:
+            return
+        assignments = []
+        args: list[Any] = []
+        if status is not None:
+            args.append(status)
+            assignments.append(f"status = ${len(args)}")
+        if config_json is not None:
+            args.append(json.dumps(config_json, ensure_ascii=False, default=str))
+            assignments.append(f"config_json = ${len(args)}::jsonb")
+        if not assignments:
+            return
+        args.append(revision_id)
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''
+                update "{self._schema}".config_revisions
+                set {", ".join(assignments)}
+                where id = ${len(args)}
+                ''',
+                *args,
+            )
+
+    async def set_config_revision_status(self, revision_id: str, status: str) -> None:
+        if self._pool is None:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''
+                update "{self._schema}".config_revisions
+                set status = $1
+                where id = $2
+                ''',
+                status,
+                revision_id,
             )
 
     async def list_config_revisions(

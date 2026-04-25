@@ -27,6 +27,7 @@ import asyncio
 import logging
 import re
 import time
+from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 import httpx
@@ -35,6 +36,7 @@ from packages.core.event_bus import EventBus
 from packages.core.types import (
     ActionType,
     AgentDecision,
+    EmotionLabel,
     EmotionState,
     EventType,
     NovaEvent,
@@ -42,6 +44,19 @@ from packages.core.types import (
 )
 
 log = logging.getLogger("nova.orchestrator")
+
+
+@dataclass
+class _RoutingPlan:
+    intent: str = "unknown"
+    intent_confidence: float = 0.0
+    max_tokens: int = 150
+    temperature: float = 0.85
+    rag_top_k: int = 3
+    rag_score_threshold: float = 0.25
+    allow_tools: bool = False
+    tone_hint: str = "steady and conversational"
+    response_style: str = "Answer naturally and keep the response concise."
 
 # ─── Sentence splitter ─────────────────────────────────────────────────────
 
@@ -345,20 +360,37 @@ class Orchestrator:
             log.debug("NLU intent: %s (%.2f) for '%.30s'",
                       intent_result.intent.value, intent_result.confidence, query)
 
+        routing_plan = self._build_routing_plan(
+            query=query,
+            action_type=action_type,
+            emotion=emotion,
+            intent_result=intent_result,
+        )
+
         # 3. RAG retrieval (if knowledge base available)
         rag_context = ""
-        if self._kb is not None and query:
+        if self._kb is not None and query and routing_plan.rag_top_k > 0:
             try:
-                from packages.knowledge.rag_prompt import RAGPromptBuilder
                 # Quick retrieval for context injection
-                rag_texts = await self._kb.retrieve_texts(query, top_k=3, score_threshold=0.25)
+                rag_texts = await self._kb.retrieve_texts(
+                    query,
+                    top_k=routing_plan.rag_top_k,
+                    score_threshold=routing_plan.rag_score_threshold,
+                )
                 if rag_texts:
                     rag_context = "\n[相关知识]\n" + "\n---\n".join(rag_texts[:3])
             except Exception as e:
                 log.debug("RAG retrieval failed: %s", e)
 
         # 4. Build prompt (with RAG context)
-        messages = self._build_messages(trigger, mem_ctx, emotion, action_type)
+        messages = self._build_messages(
+            trigger,
+            mem_ctx,
+            emotion,
+            action_type,
+            routing_plan,
+            intent_result,
+        )
 
         # Inject RAG context into user message
         if rag_context:
@@ -371,7 +403,11 @@ class Orchestrator:
         sentence_index = 0
 
         # Tool calling support
-        tool_definitions = self._tools.all_definitions() if self._tools else None
+        tool_definitions = (
+            self._tools.all_definitions()
+            if self._tools and routing_plan.allow_tools
+            else None
+        )
 
         for _tool_round in range(self.MAX_TOOL_ROUNDS + 1):
             tool_calls_accumulated: list[dict[str, Any]] = []
@@ -379,8 +415,8 @@ class Orchestrator:
 
             async for chunk in self._llm.stream_completion(
                 messages,
-                max_tokens=150,
-                temperature=self._temperature_from_emotion(emotion),
+                max_tokens=routing_plan.max_tokens,
+                temperature=routing_plan.temperature,
                 tools=tool_definitions if _tool_round == 0 else None,
             ):
                 if chunk.get("type") == "text":
@@ -486,7 +522,16 @@ class Orchestrator:
                 "trace_id":       trace_id,
                 "sentence_count": sentence_index + (1 if sentence_buffer.strip() else 0),
                 "intent":         intent_result.intent.value if intent_result else "unknown",
+                "intent_confidence": intent_result.confidence if intent_result else 0.0,
                 "rag_used":       bool(rag_context),
+                "routing": {
+                    "tone_hint": routing_plan.tone_hint,
+                    "response_style": routing_plan.response_style,
+                    "max_tokens": routing_plan.max_tokens,
+                    "temperature": routing_plan.temperature,
+                    "rag_top_k": routing_plan.rag_top_k,
+                    "allow_tools": routing_plan.allow_tools,
+                },
             },
             priority=Priority.HIGH,
             source="orchestrator",
@@ -548,8 +593,17 @@ class Orchestrator:
         mem_ctx: dict,
         emotion: EmotionState,
         action_type: ActionType,
+        routing_plan: _RoutingPlan,
+        intent_result: Any | None,
     ) -> list[dict[str, str]]:
         system = self._per.system_prompt()
+        routing_block = (
+            f"Intent: {routing_plan.intent} ({routing_plan.intent_confidence:.2f})\n"
+            f"Tone: {routing_plan.tone_hint}\n"
+            f"Style: {routing_plan.response_style}\n"
+        )
+        if intent_result and getattr(intent_result, "entities", None):
+            routing_block += f"Entities: {intent_result.entities}\n"
 
         # Inject live context
         context_block = (
@@ -565,6 +619,8 @@ class Orchestrator:
             hints_text = "\n".join(f"- {h}" for h in episodic[:3])
             context_block += f"[相关记忆]\n{hints_text}\n"
 
+        context_block += routing_block
+
         if action_type == ActionType.INITIATE:
             user_msg = (
                 f"{context_block}\n"
@@ -572,6 +628,7 @@ class Orchestrator:
                 f"话题可以是今天的游戏、最近的热点、或者向观众抛出一个有趣的问题。"
                 f"50字以内。"
             )
+            user_msg += f"\nRoute requirement: {routing_plan.response_style}"
         else:
             event_text = trigger.payload.get("text", "")
             viewer_name = trigger.payload.get("viewer", {}).get("username", "观众")
@@ -587,15 +644,106 @@ class Orchestrator:
                 f"[{viewer_name}的消息]: {event_text}\n\n"
                 f"请以你的角色自然回应。50字以内。"
             )
+            user_msg += (
+                f"\nRoute requirement: {routing_plan.response_style}"
+                "\nUse tools only when they materially help and stay in character."
+            )
 
         return [
             {"role": "system",    "content": system},
             {"role": "user",      "content": user_msg},
         ]
 
+    def _build_routing_plan(
+        self,
+        query: str,
+        action_type: ActionType,
+        emotion: EmotionState,
+        intent_result: Any | None,
+    ) -> _RoutingPlan:
+        intent = intent_result.intent.value if intent_result else "unknown"
+        confidence = float(intent_result.confidence) if intent_result else 0.0
+        plan = _RoutingPlan(
+            intent=intent,
+            intent_confidence=confidence,
+            temperature=self._temperature_from_emotion(emotion),
+            tone_hint=self._tone_hint_from_emotion(emotion),
+        )
+
+        if action_type == ActionType.INITIATE:
+            plan.max_tokens = 120
+            plan.rag_top_k = 1
+            plan.rag_score_threshold = 0.20
+            plan.response_style = "Open a fresh topic proactively, keep momentum, and end with a hook."
+            plan.temperature = min(1.15, plan.temperature + 0.05)
+            return plan
+
+        if intent == "question":
+            plan.max_tokens = 220
+            plan.rag_top_k = 5
+            plan.rag_score_threshold = 0.18
+            plan.temperature = max(0.62, min(plan.temperature, 0.82))
+            plan.response_style = "Answer directly, prioritize factual grounding, and only elaborate when useful."
+        elif intent in {"command", "request"}:
+            plan.max_tokens = 180
+            plan.rag_top_k = 2
+            plan.rag_score_threshold = 0.20
+            plan.allow_tools = bool(self._tool_executor) and confidence >= 0.55
+            plan.temperature = max(0.60, plan.temperature - 0.08)
+            plan.response_style = "Treat this as an action request, use tools when available, otherwise explain the limitation plainly."
+        elif intent == "greeting":
+            plan.max_tokens = 80
+            plan.rag_top_k = 0
+            plan.temperature = max(0.65, plan.temperature - 0.04)
+            plan.response_style = "Respond warmly and quickly, greet the viewer naturally, and avoid over-explaining."
+        elif intent == "emotion":
+            plan.max_tokens = 120
+            plan.rag_top_k = 0
+            plan.temperature = min(1.10, plan.temperature + 0.03)
+            plan.response_style = "Acknowledge the feeling first, mirror the emotion with empathy, then reply in character."
+        elif intent == "topic":
+            plan.max_tokens = 180
+            plan.rag_top_k = 4
+            plan.rag_score_threshold = 0.20
+            plan.response_style = "Lean into the topic, add one concrete angle, and keep the conversation moving."
+        else:
+            plan.max_tokens = 140
+            plan.rag_top_k = 2
+            plan.rag_score_threshold = 0.24
+            plan.response_style = "Keep the reply natural, concise, and easy to speak aloud."
+
+        if emotion.label in (EmotionLabel.SAD, EmotionLabel.ANXIOUS):
+            plan.response_style += " Keep the tone steady and reassuring."
+            plan.temperature = max(0.60, plan.temperature - 0.05)
+        elif emotion.label in (EmotionLabel.EXCITED, EmotionLabel.HAPPY):
+            plan.response_style += " Let the response feel lively without becoming noisy."
+            plan.temperature = min(1.15, plan.temperature + 0.04)
+
+        if not query.strip():
+            plan.rag_top_k = 0
+            plan.allow_tools = False
+
+        return plan
+
+    @staticmethod
+    def _tone_hint_from_emotion(emotion: EmotionState) -> str:
+        if emotion.label == EmotionLabel.EXCITED:
+            return "energetic and playful"
+        if emotion.label == EmotionLabel.HAPPY:
+            return "warm and upbeat"
+        if emotion.label == EmotionLabel.CALM:
+            return "calm and steady"
+        if emotion.label == EmotionLabel.CURIOUS:
+            return "curious and inviting"
+        if emotion.label == EmotionLabel.SURPRISED:
+            return "animated and reactive"
+        if emotion.label == EmotionLabel.SAD:
+            return "gentle and empathetic"
+        if emotion.label == EmotionLabel.ANXIOUS:
+            return "reassuring and controlled"
+        return "steady and conversational"
+
     @staticmethod
     def _temperature_from_emotion(emotion: EmotionState) -> float:
         """Higher arousal → more creative/spontaneous responses."""
-        return 0.75 + emotion.arousal * 0.35   # 0.75 .. 1.10
-
-
+        return 0.72 + emotion.arousal * 0.22 + max(0.0, emotion.valence) * 0.06

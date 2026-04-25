@@ -5,6 +5,10 @@ from __future__ import annotations
 import os
 import socket
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from apps.nova_server.main import NovaApp
 
 
 @dataclass(frozen=True)
@@ -46,3 +50,13 @@ def configure_worker_environment(role: str) -> None:
     os.environ.setdefault("NOVA_RUNTIME__EVENT_BUS_CONSUMER_NAME", f"{group}-{hostname}")
     os.environ.setdefault("NOVA_RUNTIME__INSTANCE_NAME", f"{role}-{hostname}")
     os.environ.setdefault("NOVA_RUNTIME__SESSION_ID", "primary")
+
+
+def create_worker_app(role: str) -> "NovaApp":
+    configure_worker_environment(role)
+
+    from packages.core.config import load_settings
+    from apps.nova_server.main import NovaApp
+
+    settings = load_settings()
+    return NovaApp(settings)

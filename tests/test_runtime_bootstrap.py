@@ -1,4 +1,4 @@
-from apps.nova_runtime.bootstrap import build_role_plan
+from apps.nova_runtime.bootstrap import build_role_plan, create_worker_app
 
 
 def test_build_role_plan_for_api():
@@ -13,3 +13,8 @@ def test_build_role_plan_for_cognitive():
     assert plan.run_bus is True
     assert plan.run_cognitive is True
     assert plan.run_perception is False
+
+
+def test_create_worker_app_sets_role():
+    app = create_worker_app("generation")
+    assert app.settings.runtime.role == "generation"
