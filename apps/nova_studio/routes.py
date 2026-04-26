@@ -67,6 +67,12 @@ STUDIO_HTML = """<!DOCTYPE html>
     <div class="flex items-center gap-3 mb-6">
       <span id="status-dot" class="dot-ok"></span>
       <span class="text-sm font-semibold" id="char-name">NOVA</span>
+      <div class="ml-auto flex items-center gap-2">
+        <input id="login-user-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="user id">
+        <button onclick="studioLogin()" class="bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 rounded px-2 py-1 text-xs">Login</button>
+        <button onclick="studioLogout()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs">Logout</button>
+        <span class="text-xs text-white/50" id="current-user">anonymous</span>
+      </div>
       <span class="text-xs text-white/40" id="uptime">—</span>
     </div>
 
@@ -146,12 +152,6 @@ STUDIO_HTML = """<!DOCTYPE html>
           <div class="text-xs text-white/60">Session: <span id="runtime-session">unknown</span></div>
           <div class="text-xs text-white/60">Hot State: <span id="runtime-hot">false</span></div>
         </div>
-      </div>
-      <div class="ml-auto flex items-center gap-2">
-        <input id="login-user-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="user id">
-        <button onclick="studioLogin()" class="bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 rounded px-2 py-1 text-xs">Login</button>
-        <button onclick="studioLogout()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs">Logout</button>
-        <span class="text-xs text-white/50" id="current-user">anonymous</span>
       </div>
     </div>
 
