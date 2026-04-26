@@ -72,16 +72,6 @@ class _FakeConn:
                 "last_message": "hello",
                 "payload_json": {},
             }]
-        if "roles" in query:
-            return [{
-                "id": "role-1",
-                "tenant_id": "tenant-1",
-                "name": "admin",
-                "scope": "tenant",
-                "description": "Administrator",
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
-            }]
         if "config_revisions" in query:
             return [{
                 "id": "rev-1",
@@ -92,6 +82,53 @@ class _FakeConn:
                 "status": "draft",
                 "config_json": {},
                 "created_at": datetime.utcnow(),
+            }]
+        if "role_permissions" in query:
+            return [{
+                "role_id": "role-1",
+                "permission_id": "perm-1",
+                "code": "tenant.read",
+                "resource": "tenant",
+                "action": "read",
+                "description": "Read tenants",
+            }]
+        if "permissions" in query:
+            return [{
+                "id": "perm-1",
+                "code": "tenant.read",
+                "resource": "tenant",
+                "action": "read",
+                "description": "Read tenants",
+                "created_at": datetime.utcnow(),
+            }]
+        if "user_roles" in query:
+            return [{
+                "user_id": "user-1",
+                "role_id": "role-1",
+                "tenant_id": "tenant-1",
+                "name": "admin",
+                "scope": "tenant",
+                "description": "Administrator",
+            }]
+        if "users" in query:
+            return [{
+                "id": "user-1",
+                "tenant_id": "tenant-1",
+                "email": "demo@example.com",
+                "display_name": "Demo User",
+                "status": "active",
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            }]
+        if "roles" in query:
+            return [{
+                "id": "role-1",
+                "tenant_id": "tenant-1",
+                "name": "admin",
+                "scope": "tenant",
+                "description": "Administrator",
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
             }]
         if "tenants" in query:
             return [{
@@ -270,3 +307,46 @@ async def test_postgres_store_updates_control_plane_records():
     assert 'update "public".tenants' in queries
     assert 'update "public".roles' in queries
     assert 'update "public".config_revisions' in queries
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_permissions_and_role_bindings():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+
+    await store.create_permission("perm-1", "tenant.read", "tenant", "read", "Read tenants")
+    await store.set_role_permissions("role-1", ["perm-1"])
+    permissions = await store.list_permissions(limit=10, offset=0, resource="tenant", action="read")
+    role_permissions = await store.list_role_permissions(role_id="role-1", limit=10, offset=0)
+
+    assert permissions[0]["id"] == "perm-1"
+    assert role_permissions[0]["permission_id"] == "perm-1"
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_users_roles_and_permission_lookup():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+
+    await store.create_user("user-1", "tenant-1", "demo@example.com", "Demo User", "active")
+    await store.update_user("user-1", status="suspended")
+    await store.set_user_roles("user-1", ["role-1"])
+    users = await store.list_users(limit=10, offset=0, tenant_id="tenant-1", status="active")
+    user_roles = await store.list_user_roles(user_id="user-1", limit=10, offset=0)
+    has_permission = await store.user_has_permission("user-1", "tenant.read")
+
+    assert users[0]["id"] == "user-1"
+    assert user_roles[0]["role_id"] == "role-1"
+    assert has_permission is True
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_builds_user_auth_context():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+
+    context = await store.get_user_auth_context(user_id="user-1")
+
+    assert context is not None
+    assert context["user"]["id"] == "user-1"
+    assert "tenant-1" in context["tenant_ids"]

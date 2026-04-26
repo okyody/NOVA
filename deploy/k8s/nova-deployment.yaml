@@ -36,6 +36,10 @@ spec:
               name: avatar-ws
               protocol: TCP
           env:
+            - name: NOVA_RUNTIME__ROLE
+              value: api
+            - name: NOVA_RUNTIME__INSTANCE_NAME
+              value: nova-api
             - name: NOVA_CONFIG
               value: /app/nova.config.json
             - name: NOVA_LLM__BASE_URL
@@ -145,6 +149,244 @@ spec:
       name: avatar-ws
   selector:
     app: nova
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nova-perception
+  labels:
+    app: nova
+    component: perception
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nova
+      component: perception
+  template:
+    metadata:
+      labels:
+        app: nova
+        component: perception
+    spec:
+      serviceAccountName: nova
+      containers:
+        - name: nova-perception
+          image: nova:latest
+          imagePullPolicy: IfNotPresent
+          command: ["nova-worker", "perception"]
+          env:
+            - name: NOVA_RUNTIME__ROLE
+              value: perception
+            - name: NOVA_RUNTIME__EVENT_BUS_MODE
+              value: external_consumer
+            - name: NOVA_RUNTIME__EVENT_BUS_BACKEND
+              value: redis_streams
+            - name: NOVA_CONFIG
+              value: /app/nova.config.json
+            - name: NOVA_LLM__BASE_URL
+              value: http://ollama:11434/v1
+            - name: NOVA_KNOWLEDGE__ENABLED
+              value: "true"
+            - name: NOVA_KNOWLEDGE__VECTOR_BACKEND
+              value: qdrant
+            - name: NOVA_KNOWLEDGE__QDRANT_URL
+              value: http://qdrant:6333
+            - name: NOVA_PERSIST__ENABLED
+              value: "true"
+            - name: NOVA_PERSIST__BACKEND
+              value: redis
+            - name: NOVA_PERSIST__REDIS_URL
+              value: redis://redis:6379
+            - name: NOVA_PERSIST__POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: postgres-url
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: config
+              mountPath: /app/nova.config.json
+              subPath: nova.config.json
+              readOnly: true
+            - name: characters
+              mountPath: /app/characters
+              readOnly: true
+            - name: knowledge
+              mountPath: /app/knowledge
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: nova-config
+        - name: characters
+          configMap:
+            name: nova-characters
+        - name: knowledge
+          configMap:
+            name: nova-knowledge
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nova-cognitive
+  labels:
+    app: nova
+    component: cognitive
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nova
+      component: cognitive
+  template:
+    metadata:
+      labels:
+        app: nova
+        component: cognitive
+    spec:
+      serviceAccountName: nova
+      containers:
+        - name: nova-cognitive
+          image: nova:latest
+          imagePullPolicy: IfNotPresent
+          command: ["nova-worker", "cognitive"]
+          env:
+            - name: NOVA_RUNTIME__ROLE
+              value: cognitive
+            - name: NOVA_RUNTIME__EVENT_BUS_MODE
+              value: external_consumer
+            - name: NOVA_RUNTIME__EVENT_BUS_BACKEND
+              value: redis_streams
+            - name: NOVA_CONFIG
+              value: /app/nova.config.json
+            - name: NOVA_LLM__BASE_URL
+              value: http://ollama:11434/v1
+            - name: NOVA_KNOWLEDGE__ENABLED
+              value: "true"
+            - name: NOVA_KNOWLEDGE__VECTOR_BACKEND
+              value: qdrant
+            - name: NOVA_KNOWLEDGE__QDRANT_URL
+              value: http://qdrant:6333
+            - name: NOVA_PERSIST__ENABLED
+              value: "true"
+            - name: NOVA_PERSIST__BACKEND
+              value: redis
+            - name: NOVA_PERSIST__REDIS_URL
+              value: redis://redis:6379
+            - name: NOVA_PERSIST__POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: postgres-url
+            - name: NOVA_PERSIST__PERSIST_CONVERSATIONS
+              value: "true"
+            - name: NOVA_PERSIST__PERSIST_SAFETY
+              value: "true"
+          resources:
+            requests:
+              cpu: 400m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: config
+              mountPath: /app/nova.config.json
+              subPath: nova.config.json
+              readOnly: true
+            - name: characters
+              mountPath: /app/characters
+              readOnly: true
+            - name: knowledge
+              mountPath: /app/knowledge
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: nova-config
+        - name: characters
+          configMap:
+            name: nova-characters
+        - name: knowledge
+          configMap:
+            name: nova-knowledge
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nova-generation
+  labels:
+    app: nova
+    component: generation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nova
+      component: generation
+  template:
+    metadata:
+      labels:
+        app: nova
+        component: generation
+    spec:
+      serviceAccountName: nova
+      containers:
+        - name: nova-generation
+          image: nova:latest
+          imagePullPolicy: IfNotPresent
+          command: ["nova-worker", "generation"]
+          env:
+            - name: NOVA_RUNTIME__ROLE
+              value: generation
+            - name: NOVA_RUNTIME__EVENT_BUS_MODE
+              value: external_consumer
+            - name: NOVA_RUNTIME__EVENT_BUS_BACKEND
+              value: redis_streams
+            - name: NOVA_CONFIG
+              value: /app/nova.config.json
+            - name: NOVA_LLM__BASE_URL
+              value: http://ollama:11434/v1
+            - name: NOVA_PERSIST__ENABLED
+              value: "true"
+            - name: NOVA_PERSIST__BACKEND
+              value: redis
+            - name: NOVA_PERSIST__REDIS_URL
+              value: redis://redis:6379
+            - name: NOVA_PERSIST__POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: postgres-url
+          resources:
+            requests:
+              cpu: 300m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: config
+              mountPath: /app/nova.config.json
+              subPath: nova.config.json
+              readOnly: true
+            - name: characters
+              mountPath: /app/characters
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: nova-config
+        - name: characters
+          configMap:
+            name: nova-characters
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -392,6 +634,112 @@ data:
       resource_id text,
       detail_json jsonb not null default '{}'::jsonb
     );
+    create table if not exists public.tenants (
+      id text primary key,
+      name text not null,
+      slug text not null unique,
+      status text not null default 'active',
+      plan text not null default 'enterprise',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists public.roles (
+      id text primary key,
+      tenant_id text not null,
+      name text not null,
+      scope text not null,
+      description text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists public.config_revisions (
+      id text primary key,
+      tenant_id text not null,
+      resource_type text not null,
+      resource_id text not null,
+      revision_no integer not null,
+      status text not null default 'draft',
+      config_json jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now()
+    );
+    create table if not exists public.permissions (
+      id text primary key,
+      code text not null unique,
+      resource text not null,
+      action text not null,
+      description text,
+      created_at timestamptz not null default now()
+    );
+    create table if not exists public.role_permissions (
+      role_id text not null,
+      permission_id text not null,
+      created_at timestamptz not null default now(),
+      primary key (role_id, permission_id)
+    );
+    create table if not exists public.users (
+      id text primary key,
+      tenant_id text not null,
+      email text not null,
+      display_name text,
+      status text not null default 'active',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists public.user_roles (
+      user_id text not null,
+      role_id text not null,
+      created_at timestamptz not null default now(),
+      primary key (user_id, role_id)
+    );
+    create index if not exists idx_runtime_sessions_started_at on public.runtime_sessions (started_at desc);
+    create index if not exists idx_runtime_viewers_session_id on public.runtime_viewers (session_id);
+    create index if not exists idx_audit_logs_ts on public.audit_logs (ts desc);
+    create index if not exists idx_roles_tenant_id on public.roles (tenant_id);
+    create index if not exists idx_config_revisions_resource on public.config_revisions (resource_type, resource_id, revision_no desc);
+    create index if not exists idx_permissions_code on public.permissions (code);
+    create index if not exists idx_users_tenant_id on public.users (tenant_id);
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nova-postgres-migrate
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: postgres:16-alpine
+          env:
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: postgres-user
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: postgres-password
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: postgres-db
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until pg_isready -h postgres -U "$PGUSER" -d "$PGDATABASE"; do sleep 2; done
+              psql -h postgres -U "$PGUSER" -d "$PGDATABASE" -f /sql/init_postgres.sql
+          volumeMounts:
+            - name: postgres-init
+              mountPath: /sql/init_postgres.sql
+              subPath: init_postgres.sql
+      volumes:
+        - name: postgres-init
+          configMap:
+            name: nova-postgres-init
 ---
 apiVersion: batch/v1
 kind: CronJob

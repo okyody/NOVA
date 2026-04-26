@@ -167,6 +167,51 @@ class PostgresRuntimeStore:
                 )
                 '''
             )
+            await conn.execute(
+                f'''
+                create table if not exists "{self._schema}".permissions (
+                    id text primary key,
+                    code text not null unique,
+                    resource text not null,
+                    action text not null,
+                    description text,
+                    created_at timestamptz not null default now()
+                )
+                '''
+            )
+            await conn.execute(
+                f'''
+                create table if not exists "{self._schema}".role_permissions (
+                    role_id text not null,
+                    permission_id text not null,
+                    created_at timestamptz not null default now(),
+                    primary key (role_id, permission_id)
+                )
+                '''
+            )
+            await conn.execute(
+                f'''
+                create table if not exists "{self._schema}".users (
+                    id text primary key,
+                    tenant_id text not null,
+                    email text not null,
+                    display_name text,
+                    status text not null default 'active',
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                )
+                '''
+            )
+            await conn.execute(
+                f'''
+                create table if not exists "{self._schema}".user_roles (
+                    user_id text not null,
+                    role_id text not null,
+                    created_at timestamptz not null default now(),
+                    primary key (user_id, role_id)
+                )
+                '''
+            )
 
     async def persist_event(self, event: NovaEvent) -> None:
         if event.type == EventType.SAFETY_BLOCK and self._persist_safety:
@@ -635,6 +680,317 @@ class PostgresRuntimeStore:
                 *args,
             )
         return [dict(r) for r in rows]
+
+    async def create_permission(
+        self,
+        permission_id: str,
+        code: str,
+        resource: str,
+        action: str,
+        description: str = "",
+    ) -> None:
+        if self._pool is None:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''
+                insert into "{self._schema}".permissions (id, code, resource, action, description)
+                values ($1,$2,$3,$4,$5)
+                on conflict (id) do update set
+                    code = excluded.code,
+                    resource = excluded.resource,
+                    action = excluded.action,
+                    description = excluded.description
+                ''',
+                permission_id,
+                code,
+                resource,
+                action,
+                description,
+            )
+
+    async def list_permissions(
+        self,
+        *,
+        resource: str | None = None,
+        action: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        clauses = []
+        args: list[Any] = []
+        if resource:
+            args.append(resource)
+            clauses.append(f"resource = ${len(args)}")
+        if action:
+            args.append(action)
+            clauses.append(f"action = ${len(args)}")
+        where_sql = f"where {' and '.join(clauses)}" if clauses else ""
+        args.extend([limit, offset])
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, code, resource, action, description, created_at
+                from "{self._schema}".permissions
+                {where_sql}
+                order by created_at desc
+                limit ${len(args)-1} offset ${len(args)}
+                ''',
+                *args,
+            )
+        return [dict(r) for r in rows]
+
+    async def set_role_permissions(self, role_id: str, permission_ids: list[str]) -> None:
+        if self._pool is None:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''delete from "{self._schema}".role_permissions where role_id = $1''',
+                role_id,
+            )
+            for permission_id in permission_ids:
+                await conn.execute(
+                    f'''
+                    insert into "{self._schema}".role_permissions (role_id, permission_id)
+                    values ($1,$2)
+                    on conflict (role_id, permission_id) do nothing
+                    ''',
+                    role_id,
+                    permission_id,
+                )
+
+    async def list_role_permissions(self, *, role_id: str, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select rp.role_id, rp.permission_id, p.code, p.resource, p.action, p.description
+                from "{self._schema}".role_permissions rp
+                join "{self._schema}".permissions p on p.id = rp.permission_id
+                where rp.role_id = $1
+                order by p.code asc
+                limit $2 offset $3
+                ''',
+                role_id,
+                limit,
+                offset,
+            )
+        return [dict(r) for r in rows]
+
+    async def create_user(
+        self,
+        user_id: str,
+        tenant_id: str,
+        email: str,
+        display_name: str = "",
+        status: str = "active",
+    ) -> None:
+        if self._pool is None:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''
+                insert into "{self._schema}".users (id, tenant_id, email, display_name, status)
+                values ($1,$2,$3,$4,$5)
+                on conflict (id) do update set
+                    tenant_id = excluded.tenant_id,
+                    email = excluded.email,
+                    display_name = excluded.display_name,
+                    status = excluded.status,
+                    updated_at = now()
+                ''',
+                user_id,
+                tenant_id,
+                email,
+                display_name,
+                status,
+            )
+
+    async def update_user(
+        self,
+        user_id: str,
+        *,
+        email: str | None = None,
+        display_name: str | None = None,
+        status: str | None = None,
+    ) -> None:
+        if self._pool is None:
+            return
+        assignments = []
+        args: list[Any] = []
+        for column, value in (
+            ("email", email),
+            ("display_name", display_name),
+            ("status", status),
+        ):
+            if value is not None:
+                args.append(value)
+                assignments.append(f"{column} = ${len(args)}")
+        if not assignments:
+            return
+        assignments.append("updated_at = now()")
+        args.append(user_id)
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''
+                update "{self._schema}".users
+                set {", ".join(assignments)}
+                where id = ${len(args)}
+                ''',
+                *args,
+            )
+
+    async def list_users(
+        self,
+        *,
+        tenant_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        clauses = []
+        args: list[Any] = []
+        if tenant_id:
+            args.append(tenant_id)
+            clauses.append(f"tenant_id = ${len(args)}")
+        if status:
+            args.append(status)
+            clauses.append(f"status = ${len(args)}")
+        where_sql = f"where {' and '.join(clauses)}" if clauses else ""
+        args.extend([limit, offset])
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, tenant_id, email, display_name, status, created_at, updated_at
+                from "{self._schema}".users
+                {where_sql}
+                order by created_at desc
+                limit ${len(args)-1} offset ${len(args)}
+                ''',
+                *args,
+            )
+        return [dict(r) for r in rows]
+
+    async def get_user(
+        self,
+        *,
+        user_id: str | None = None,
+        email: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._pool is None:
+            return None
+        if not user_id and not email:
+            return None
+        async with self._pool.acquire() as conn:
+            if user_id:
+                rows = await conn.fetch(
+                    f'''
+                    select id, tenant_id, email, display_name, status, created_at, updated_at
+                    from "{self._schema}".users
+                    where id = $1
+                    limit 1
+                    ''',
+                    user_id,
+                )
+            else:
+                rows = await conn.fetch(
+                    f'''
+                    select id, tenant_id, email, display_name, status, created_at, updated_at
+                    from "{self._schema}".users
+                    where email = $1
+                    limit 1
+                    ''',
+                    email,
+                )
+        return dict(rows[0]) if rows else None
+
+    async def set_user_roles(self, user_id: str, role_ids: list[str]) -> None:
+        if self._pool is None:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''delete from "{self._schema}".user_roles where user_id = $1''',
+                user_id,
+            )
+            for role_id in role_ids:
+                await conn.execute(
+                    f'''
+                    insert into "{self._schema}".user_roles (user_id, role_id)
+                    values ($1,$2)
+                    on conflict (user_id, role_id) do nothing
+                    ''',
+                    user_id,
+                    role_id,
+                )
+
+    async def list_user_roles(self, *, user_id: str, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select ur.user_id, ur.role_id, r.tenant_id, r.name, r.scope, r.description
+                from "{self._schema}".user_roles ur
+                join "{self._schema}".roles r on r.id = ur.role_id
+                where ur.user_id = $1
+                order by r.name asc
+                limit $2 offset $3
+                ''',
+                user_id,
+                limit,
+                offset,
+            )
+        return [dict(r) for r in rows]
+
+    async def user_has_permission(self, user_id: str, permission_code: str) -> bool:
+        if self._pool is None:
+            return False
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select p.code
+                from "{self._schema}".user_roles ur
+                join "{self._schema}".role_permissions rp on rp.role_id = ur.role_id
+                join "{self._schema}".permissions p on p.id = rp.permission_id
+                where ur.user_id = $1 and p.code = $2
+                limit 1
+                ''',
+                user_id,
+                permission_code,
+            )
+        return bool(rows)
+
+    async def get_user_auth_context(self, *, user_id: str | None = None, email: str | None = None) -> dict[str, Any] | None:
+        user = await self.get_user(user_id=user_id, email=email)
+        if not user:
+            return None
+
+        roles = await self.list_user_roles(user_id=user["id"], limit=200, offset=0)
+        tenant_ids = sorted({user["tenant_id"], *[role.get("tenant_id") for role in roles if role.get("tenant_id")]})
+        role_names = sorted({role.get("name") for role in roles if role.get("name")})
+
+        permission_codes: set[str] = set()
+        for role in roles:
+            role_id = role.get("role_id")
+            if role_id:
+                role_permissions = await self.list_role_permissions(role_id=role_id, limit=200, offset=0)
+                permission_codes.update(
+                    permission.get("code")
+                    for permission in role_permissions
+                    if permission.get("code")
+                )
+
+        return {
+            "user": user,
+            "roles": role_names,
+            "permissions": sorted(permission_codes),
+            "tenant_ids": tenant_ids,
+        }
 
     async def create_config_revision(
         self,

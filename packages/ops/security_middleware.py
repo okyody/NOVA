@@ -38,12 +38,20 @@ class JWTAuth:
         self._algorithm = algorithm
         self._expire_minutes = expire_minutes
 
-    def create_token(self, subject: str, roles: list[str] | None = None) -> str:
+    def create_token(
+        self,
+        subject: str,
+        roles: list[str] | None = None,
+        permissions: list[str] | None = None,
+        tenant_ids: list[str] | None = None,
+    ) -> str:
         if not HAS_JWT:
             raise RuntimeError("PyJWT not installed. Run: pip install PyJWT")
         payload = {
             "sub": subject,
             "roles": roles or ["viewer"],
+            "permissions": permissions or [],
+            "tenant_ids": tenant_ids or [],
             "iat": int(time.time()),
             "exp": int(time.time()) + self._expire_minutes * 60,
         }
@@ -219,7 +227,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     # Paths that don't require authentication
     PUBLIC_PATHS = {
         "/health", "/metrics", "/docs", "/openapi.json", "/redoc",
-        "/studio/", "/favicon.ico",
+        "/studio/", "/favicon.ico", "/api/auth/token",
     }
 
     def __init__(
@@ -234,11 +242,37 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self._api_key = api_key_auth or APIKeyAuth()
         self._enabled = enabled
 
+    def _attach_api_key_user(self, request: Request, api_key: str) -> bool:
+        if api_key and self._api_key.verify(api_key):
+            request.state.user = {
+                "sub": "api_key",
+                "roles": ["service_admin"],
+                "permissions": ["*"],
+                "tenant_ids": [],
+                "auth_type": "api_key",
+            }
+            return True
+        return False
+
+    def _attach_bearer_user(self, request: Request, auth_header: str) -> bool:
+        if auth_header.startswith("Bearer ") and self._jwt:
+            token = auth_header[7:]
+            payload = self._jwt.verify_token(token)
+            if payload:
+                request.state.user = payload
+                return True
+        return False
+
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if not self._enabled:
             return await call_next(request)
 
         path = request.url.path
+        api_key = request.headers.get("X-API-Key", "")
+        auth_header = request.headers.get("Authorization", "")
+
+        # Best-effort identity attachment for public endpoints like Studio.
+        self._attach_api_key_user(request, api_key) or self._attach_bearer_user(request, auth_header)
 
         # Allow public paths and WebSocket upgrades
         if path in self.PUBLIC_PATHS or any(path.startswith(p) for p in self.PUBLIC_PATHS):
@@ -249,19 +283,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Check API key header
-        api_key = request.headers.get("X-API-Key", "")
-        if api_key and self._api_key.verify(api_key):
+        if self._attach_api_key_user(request, api_key):
             return await call_next(request)
 
         # Check JWT Bearer token
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-            if self._jwt:
-                payload = self._jwt.verify_token(token)
-                if payload:
-                    request.state.user = payload
-                    return await call_next(request)
+        if self._attach_bearer_user(request, auth_header):
+            return await call_next(request)
 
         return JSONResponse(
             status_code=401,

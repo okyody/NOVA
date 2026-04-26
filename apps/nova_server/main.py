@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, Request
+from fastapi import FastAPI, WebSocket, Request, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 # ── Logging (must be first!) ──────────────────────────────────────────────────
@@ -681,6 +681,65 @@ def create_app(settings_override: NovaSettings | None = None) -> FastAPI:
 app = create_app()
 
 
+async def require_permission(request: Request, permission_code: str) -> None:
+    nova = request.app.state.nova
+    if not nova.settings.auth.enabled:
+        return
+
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    permissions = set(user.get("permissions", []))
+    if "*" in permissions or permission_code in permissions:
+        return
+
+    roles = set(user.get("roles", []))
+    if {"service_admin", "super_admin", "admin"} & roles:
+        return
+
+    subject = user.get("sub")
+    if subject and nova.postgres_store:
+        if await nova.postgres_store.user_has_permission(subject, permission_code):
+            return
+
+    raise HTTPException(status_code=403, detail=f"Missing permission: {permission_code}")
+
+
+def _is_global_admin(user: dict[str, Any]) -> bool:
+    roles = set(user.get("roles", []))
+    permissions = set(user.get("permissions", []))
+    return bool({"service_admin", "super_admin", "admin"} & roles) or "*" in permissions
+
+
+async def resolve_tenant_scope(
+    request: Request,
+    tenant_id: str | None = None,
+    *,
+    allow_global: bool = False,
+) -> str | None:
+    nova = request.app.state.nova
+    if not nova.settings.auth.enabled:
+        return tenant_id
+
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    if _is_global_admin(user):
+        return tenant_id if tenant_id or allow_global else None
+
+    allowed_tenants = [value for value in user.get("tenant_ids", []) if value]
+    if not allowed_tenants:
+        raise HTTPException(status_code=403, detail="No tenant scope assigned")
+
+    if tenant_id is None:
+        return allowed_tenants[0]
+    if tenant_id not in allowed_tenants:
+        raise HTTPException(status_code=403, detail=f"Tenant scope denied: {tenant_id}")
+    return tenant_id
+
+
 # ── API Endpoints ─────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -882,17 +941,23 @@ async def runtime_storage_audit(request: Request):
 @app.get("/api/control/tenants")
 async def control_tenants(request: Request):
     nova = request.app.state.nova
+    await require_permission(request, "tenant.read")
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
     limit = int(request.query_params.get("limit", "100"))
     offset = int(request.query_params.get("offset", "0"))
+    scoped_tenant_id = await resolve_tenant_scope(request, request.query_params.get("tenant_id"), allow_global=True)
     rows = await nova.postgres_store.list_tenants(limit=limit, offset=offset)
+    if scoped_tenant_id:
+        rows = [row for row in rows if row.get("id") == scoped_tenant_id]
     return {"status": "ok", "count": len(rows), "items": rows}
 
 
 @app.post("/api/control/tenants")
 async def control_create_tenant(request: Request):
     nova = request.app.state.nova
+    await require_permission(request, "tenant.write")
+    await resolve_tenant_scope(request, None, allow_global=True)
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
     body = await request.json()
@@ -910,6 +975,8 @@ async def control_create_tenant(request: Request):
 @app.patch("/api/control/tenants/{tenant_id}")
 async def control_update_tenant(tenant_id: str, request: Request):
     nova = request.app.state.nova
+    await require_permission(request, "tenant.write")
+    await resolve_tenant_scope(request, tenant_id)
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
     body = await request.json()
@@ -927,23 +994,186 @@ async def control_update_tenant(tenant_id: str, request: Request):
 @app.get("/api/control/roles")
 async def control_roles(request: Request):
     nova = request.app.state.nova
+    await require_permission(request, "role.read")
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
-    tenant_id = request.query_params.get("tenant_id")
+    tenant_id = await resolve_tenant_scope(request, request.query_params.get("tenant_id"))
     limit = int(request.query_params.get("limit", "100"))
     offset = int(request.query_params.get("offset", "0"))
     rows = await nova.postgres_store.list_roles(tenant_id=tenant_id, limit=limit, offset=offset)
     return {"status": "ok", "count": len(rows), "items": rows}
 
 
+@app.get("/api/control/users")
+async def control_users(request: Request):
+    nova = request.app.state.nova
+    await require_permission(request, "user.read")
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    tenant_id = await resolve_tenant_scope(request, request.query_params.get("tenant_id"))
+    status = request.query_params.get("status")
+    limit = int(request.query_params.get("limit", "100"))
+    offset = int(request.query_params.get("offset", "0"))
+    rows = await nova.postgres_store.list_users(tenant_id=tenant_id, status=status, limit=limit, offset=offset)
+    return {"status": "ok", "count": len(rows), "items": rows}
+
+
+@app.post("/api/control/users")
+async def control_create_user(request: Request):
+    nova = request.app.state.nova
+    await require_permission(request, "user.write")
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    body = await request.json()
+    user_id = body.get("id")
+    tenant_id = await resolve_tenant_scope(request, body.get("tenant_id"))
+    email = body.get("email")
+    display_name = body.get("display_name", "")
+    status = body.get("status", "active")
+    if not user_id or not tenant_id or not email:
+        return JSONResponse({"status": "validation_error", "reason": "id, tenant_id, email required"}, status_code=400)
+    await nova.postgres_store.create_user(user_id, tenant_id, email, display_name, status)
+    await nova.postgres_store.write_audit_log("user_created", "user", body, resource_id=user_id)
+    return {"status": "ok", "id": user_id}
+
+
+@app.patch("/api/control/users/{user_id}")
+async def control_update_user(user_id: str, request: Request):
+    nova = request.app.state.nova
+    await require_permission(request, "user.write")
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    body = await request.json()
+    target_user = await nova.postgres_store.get_user(user_id=user_id) if nova.postgres_store else None
+    if target_user:
+        await resolve_tenant_scope(request, target_user.get("tenant_id"))
+    await nova.postgres_store.update_user(
+        user_id,
+        email=body.get("email"),
+        display_name=body.get("display_name"),
+        status=body.get("status"),
+    )
+    await nova.postgres_store.write_audit_log("user_updated", "user", body, resource_id=user_id)
+    return {"status": "ok", "id": user_id}
+
+
+@app.get("/api/control/users/{user_id}/roles")
+async def control_user_roles(user_id: str, request: Request):
+    nova = request.app.state.nova
+    await require_permission(request, "user.read")
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    target_user = await nova.postgres_store.get_user(user_id=user_id) if nova.postgres_store else None
+    if target_user:
+        await resolve_tenant_scope(request, target_user.get("tenant_id"))
+    limit = int(request.query_params.get("limit", "100"))
+    offset = int(request.query_params.get("offset", "0"))
+    rows = await nova.postgres_store.list_user_roles(user_id=user_id, limit=limit, offset=offset)
+    return {"status": "ok", "count": len(rows), "items": rows}
+
+
+@app.put("/api/control/users/{user_id}/roles")
+async def control_set_user_roles(user_id: str, request: Request):
+    nova = request.app.state.nova
+    await require_permission(request, "user.write")
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    target_user = await nova.postgres_store.get_user(user_id=user_id)
+    if target_user:
+        await resolve_tenant_scope(request, target_user.get("tenant_id"))
+    body = await request.json()
+    role_ids = body.get("role_ids", [])
+    if not isinstance(role_ids, list):
+        return JSONResponse({"status": "validation_error", "reason": "role_ids must be a list"}, status_code=400)
+    await nova.postgres_store.set_user_roles(user_id, role_ids)
+    await nova.postgres_store.write_audit_log("user_roles_updated", "user_role", {"role_ids": role_ids}, resource_id=user_id)
+    return {"status": "ok", "id": user_id, "role_count": len(role_ids)}
+
+
+@app.get("/api/control/permissions")
+async def control_permissions(request: Request):
+    nova = request.app.state.nova
+    await require_permission(request, "permission.read")
+    await resolve_tenant_scope(request, request.query_params.get("tenant_id"), allow_global=True)
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    resource = request.query_params.get("resource")
+    action = request.query_params.get("action")
+    limit = int(request.query_params.get("limit", "100"))
+    offset = int(request.query_params.get("offset", "0"))
+    rows = await nova.postgres_store.list_permissions(resource=resource, action=action, limit=limit, offset=offset)
+    return {"status": "ok", "count": len(rows), "items": rows}
+
+
+@app.post("/api/control/permissions")
+async def control_create_permission(request: Request):
+    nova = request.app.state.nova
+    await require_permission(request, "permission.write")
+    await resolve_tenant_scope(request, None, allow_global=True)
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    body = await request.json()
+    permission_id = body.get("id")
+    code = body.get("code")
+    resource = body.get("resource")
+    action = body.get("action")
+    description = body.get("description", "")
+    if not permission_id or not code or not resource or not action:
+        return JSONResponse({"status": "validation_error", "reason": "id, code, resource, action required"}, status_code=400)
+    await nova.postgres_store.create_permission(permission_id, code, resource, action, description)
+    await nova.postgres_store.write_audit_log("permission_created", "permission", body, resource_id=permission_id)
+    return {"status": "ok", "id": permission_id}
+
+
+@app.get("/api/control/roles/{role_id}/permissions")
+async def control_role_permissions(role_id: str, request: Request):
+    nova = request.app.state.nova
+    await require_permission(request, "role.read")
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    role_rows = await nova.postgres_store.list_roles(limit=1, offset=0) if nova.postgres_store else []
+    target_role = next((row for row in role_rows if row.get("id") == role_id), None)
+    if target_role:
+        await resolve_tenant_scope(request, target_role.get("tenant_id"))
+    limit = int(request.query_params.get("limit", "100"))
+    offset = int(request.query_params.get("offset", "0"))
+    rows = await nova.postgres_store.list_role_permissions(role_id=role_id, limit=limit, offset=offset)
+    return {"status": "ok", "count": len(rows), "items": rows}
+
+
+@app.put("/api/control/roles/{role_id}/permissions")
+async def control_set_role_permissions(role_id: str, request: Request):
+    nova = request.app.state.nova
+    await require_permission(request, "role.write")
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    role_rows = await nova.postgres_store.list_roles(limit=200, offset=0)
+    target_role = next((row for row in role_rows if row.get("id") == role_id), None)
+    if target_role:
+        await resolve_tenant_scope(request, target_role.get("tenant_id"))
+    body = await request.json()
+    permission_ids = body.get("permission_ids", [])
+    if not isinstance(permission_ids, list):
+        return JSONResponse({"status": "validation_error", "reason": "permission_ids must be a list"}, status_code=400)
+    await nova.postgres_store.set_role_permissions(role_id, permission_ids)
+    await nova.postgres_store.write_audit_log(
+        "role_permissions_updated",
+        "role_permission",
+        {"permission_ids": permission_ids},
+        resource_id=role_id,
+    )
+    return {"status": "ok", "id": role_id, "permission_count": len(permission_ids)}
+
+
 @app.post("/api/control/roles")
 async def control_create_role(request: Request):
     nova = request.app.state.nova
+    await require_permission(request, "role.write")
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
     body = await request.json()
     role_id = body.get("id")
-    tenant_id = body.get("tenant_id")
+    tenant_id = await resolve_tenant_scope(request, body.get("tenant_id"))
     name = body.get("name")
     scope = body.get("scope")
     description = body.get("description", "")
@@ -957,8 +1187,13 @@ async def control_create_role(request: Request):
 @app.patch("/api/control/roles/{role_id}")
 async def control_update_role(role_id: str, request: Request):
     nova = request.app.state.nova
+    await require_permission(request, "role.write")
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    role_rows = await nova.postgres_store.list_roles(limit=200, offset=0)
+    target_role = next((row for row in role_rows if row.get("id") == role_id), None)
+    if target_role:
+        await resolve_tenant_scope(request, target_role.get("tenant_id"))
     body = await request.json()
     await nova.postgres_store.update_role(
         role_id,
@@ -973,9 +1208,10 @@ async def control_update_role(role_id: str, request: Request):
 @app.get("/api/control/config-revisions")
 async def control_config_revisions(request: Request):
     nova = request.app.state.nova
+    await require_permission(request, "config_revision.read")
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
-    tenant_id = request.query_params.get("tenant_id")
+    tenant_id = await resolve_tenant_scope(request, request.query_params.get("tenant_id"))
     resource_type = request.query_params.get("resource_type")
     resource_id = request.query_params.get("resource_id")
     limit = int(request.query_params.get("limit", "100"))
@@ -993,11 +1229,12 @@ async def control_config_revisions(request: Request):
 @app.post("/api/control/config-revisions")
 async def control_create_config_revision(request: Request):
     nova = request.app.state.nova
+    await require_permission(request, "config_revision.write")
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
     body = await request.json()
     revision_id = body.get("id")
-    tenant_id = body.get("tenant_id")
+    tenant_id = await resolve_tenant_scope(request, body.get("tenant_id"))
     resource_type = body.get("resource_type")
     resource_id = body.get("resource_id")
     revision_no = body.get("revision_no")
@@ -1024,8 +1261,13 @@ async def control_create_config_revision(request: Request):
 @app.post("/api/control/config-revisions/{revision_id}/publish")
 async def control_publish_config_revision(revision_id: str, request: Request):
     nova = request.app.state.nova
+    await require_permission(request, "config_revision.publish")
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    revision_rows = await nova.postgres_store.list_config_revisions(limit=200, offset=0)
+    target_revision = next((row for row in revision_rows if row.get("id") == revision_id), None)
+    if target_revision:
+        await resolve_tenant_scope(request, target_revision.get("tenant_id"))
     body = await request.json() if request.headers.get("content-length") else {}
     await nova.postgres_store.set_config_revision_status(revision_id, "published")
     await nova.postgres_store.write_audit_log("config_revision_published", "config_revision", body, resource_id=revision_id)
@@ -1035,8 +1277,13 @@ async def control_publish_config_revision(revision_id: str, request: Request):
 @app.post("/api/control/config-revisions/{revision_id}/rollback")
 async def control_rollback_config_revision(revision_id: str, request: Request):
     nova = request.app.state.nova
+    await require_permission(request, "config_revision.rollback")
     if not nova.postgres_store:
         return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
+    revision_rows = await nova.postgres_store.list_config_revisions(limit=200, offset=0)
+    target_revision = next((row for row in revision_rows if row.get("id") == revision_id), None)
+    if target_revision:
+        await resolve_tenant_scope(request, target_revision.get("tenant_id"))
     body = await request.json() if request.headers.get("content-length") else {}
     await nova.postgres_store.set_config_revision_status(revision_id, "rolled_back")
     await nova.postgres_store.write_audit_log("config_revision_rolled_back", "config_revision", body, resource_id=revision_id)
@@ -1118,13 +1365,54 @@ async def create_token(request: Request):
     nova = request.app.state.nova
     if not nova.jwt_auth:
         return JSONResponse({"status": "auth not enabled"}, status_code=400)
+    if not nova.postgres_store:
+        return JSONResponse({"status": "postgres runtime store not enabled"}, status_code=400)
 
     body = await request.json()
-    subject = body.get("subject", "anonymous")
-    roles = body.get("roles", ["viewer"])
+    user_id = body.get("user_id") or body.get("subject")
+    email = body.get("email")
+    auth_context = await nova.postgres_store.get_user_auth_context(user_id=user_id, email=email)
+    if not auth_context:
+        return JSONResponse({"status": "not_found", "reason": "user not found"}, status_code=404)
+    user = auth_context["user"]
 
-    token = nova.jwt_auth.create_token(subject=subject, roles=roles)
+    token = nova.jwt_auth.create_token(
+        subject=user["id"],
+        roles=auth_context["roles"],
+        permissions=auth_context["permissions"],
+        tenant_ids=auth_context["tenant_ids"],
+    )
     return {"access_token": token, "token_type": "bearer"}
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request):
+    nova = request.app.state.nova
+    if not nova.settings.auth.enabled:
+        return JSONResponse({"status": "auth not enabled"}, status_code=400)
+
+    user = getattr(request.state, "user", None)
+    if not user:
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
+
+    subject = user.get("sub")
+    db_user = None
+    if nova.postgres_store and subject and subject != "api_key":
+        db_user = await nova.postgres_store.get_user(user_id=subject)
+
+    return {
+        "status": "ok",
+        "user": {
+            "id": subject,
+            "email": db_user.get("email") if db_user else None,
+            "display_name": db_user.get("display_name") if db_user else None,
+            "tenant_id": db_user.get("tenant_id") if db_user else None,
+            "roles": user.get("roles", []),
+            "permissions": user.get("permissions", []),
+            "tenant_ids": user.get("tenant_ids", []),
+            "auth_type": user.get("auth_type", "jwt"),
+        },
+    }
 
 
 @app.websocket("/ws/control")
@@ -1181,11 +1469,21 @@ def attach_runtime_routes(target_app: FastAPI) -> FastAPI:
     target_app.add_api_route("/api/control/roles", control_roles, methods=["GET"])
     target_app.add_api_route("/api/control/roles", control_create_role, methods=["POST"])
     target_app.add_api_route("/api/control/roles/{role_id}", control_update_role, methods=["PATCH"])
+    target_app.add_api_route("/api/control/users", control_users, methods=["GET"])
+    target_app.add_api_route("/api/control/users", control_create_user, methods=["POST"])
+    target_app.add_api_route("/api/control/users/{user_id}", control_update_user, methods=["PATCH"])
+    target_app.add_api_route("/api/control/users/{user_id}/roles", control_user_roles, methods=["GET"])
+    target_app.add_api_route("/api/control/users/{user_id}/roles", control_set_user_roles, methods=["PUT"])
+    target_app.add_api_route("/api/control/permissions", control_permissions, methods=["GET"])
+    target_app.add_api_route("/api/control/permissions", control_create_permission, methods=["POST"])
+    target_app.add_api_route("/api/control/roles/{role_id}/permissions", control_role_permissions, methods=["GET"])
+    target_app.add_api_route("/api/control/roles/{role_id}/permissions", control_set_role_permissions, methods=["PUT"])
     target_app.add_api_route("/api/control/config-revisions", control_config_revisions, methods=["GET"])
     target_app.add_api_route("/api/control/config-revisions", control_create_config_revision, methods=["POST"])
     target_app.add_api_route("/api/control/config-revisions/{revision_id}/publish", control_publish_config_revision, methods=["POST"])
     target_app.add_api_route("/api/control/config-revisions/{revision_id}/rollback", control_rollback_config_revision, methods=["POST"])
     target_app.add_api_route("/api/auth/token", create_token, methods=["POST"])
+    target_app.add_api_route("/api/auth/me", auth_me, methods=["GET"])
     target_app.add_api_route("/api/runtime/hot-state", runtime_hot_state, methods=["GET"])
     target_app.add_api_route("/api/runtime/sessions", runtime_sessions, methods=["GET"])
     target_app.add_api_route("/api/runtime/sessions/{session_id}", runtime_session_detail, methods=["GET"])

@@ -147,6 +147,12 @@ STUDIO_HTML = """<!DOCTYPE html>
           <div class="text-xs text-white/60">Hot State: <span id="runtime-hot">false</span></div>
         </div>
       </div>
+      <div class="ml-auto flex items-center gap-2">
+        <input id="login-user-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="user id">
+        <button onclick="studioLogin()" class="bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 rounded px-2 py-1 text-xs">Login</button>
+        <button onclick="studioLogout()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs">Logout</button>
+        <span class="text-xs text-white/50" id="current-user">anonymous</span>
+      </div>
     </div>
 
     <!-- Events Tab -->
@@ -224,6 +230,57 @@ STUDIO_HTML = """<!DOCTYPE html>
           <div id="revision-list" class="max-h-[320px] overflow-auto text-xs text-white/70"></div>
         </div>
       </div>
+      <div class="grid grid-cols-2 gap-4 mt-4">
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Permissions</div>
+          <div class="flex flex-col gap-2 mb-3">
+            <input id="permission-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="permission id">
+            <input id="permission-code" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="code e.g. tenant.read">
+            <input id="permission-resource" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="resource">
+            <input id="permission-action" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="action">
+            <input id="permission-description" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="description">
+            <button onclick="createPermission()" class="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 rounded px-2 py-1 text-xs">Create Permission</button>
+          </div>
+          <div id="permission-list" class="max-h-[240px] overflow-auto text-xs text-white/70"></div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Role Permission Binding</div>
+          <div class="flex flex-col gap-2 mb-3">
+            <input id="binding-role-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="role id">
+            <textarea id="binding-permission-ids" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs h-20" placeholder="permission ids, comma-separated"></textarea>
+            <div class="flex gap-2">
+              <button onclick="setRolePermissions()" class="bg-fuchsia-500/20 hover:bg-fuchsia-500/30 text-fuchsia-200 rounded px-2 py-1 text-xs flex-1">Bind Permissions</button>
+              <button onclick="loadRolePermissions()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs flex-1">Load Current</button>
+            </div>
+          </div>
+          <div id="role-permission-list" class="max-h-[240px] overflow-auto text-xs text-white/70"></div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-4 mt-4">
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Users</div>
+          <div class="flex flex-col gap-2 mb-3">
+            <input id="user-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="user id">
+            <input id="user-tenant-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="tenant id">
+            <input id="user-email" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="email">
+            <input id="user-display-name" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="display name">
+            <button onclick="createUser()" class="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 rounded px-2 py-1 text-xs">Create User</button>
+          </div>
+          <div id="user-list" class="max-h-[240px] overflow-auto text-xs text-white/70"></div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">User Role Binding</div>
+          <div class="flex flex-col gap-2 mb-3">
+            <input id="binding-user-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="user id">
+            <textarea id="binding-role-ids" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs h-20" placeholder="role ids, comma-separated"></textarea>
+            <div class="flex gap-2">
+              <button onclick="setUserRoles()" class="bg-lime-500/20 hover:bg-lime-500/30 text-lime-200 rounded px-2 py-1 text-xs flex-1">Bind Roles</button>
+              <button onclick="loadUserRoles()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs flex-1">Load Current</button>
+            </div>
+          </div>
+          <div id="user-role-list" class="max-h-[240px] overflow-auto text-xs text-white/70"></div>
+        </div>
+      </div>
       <div class="card p-4 mt-4">
         <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Control Log</div>
         <div id="control-log" class="max-h-[180px] overflow-auto text-xs text-white/60"></div>
@@ -237,6 +294,7 @@ const ws = new WebSocket(`ws://${location.host}/ws/control`);
 const eventList = document.getElementById('event-list');
 const MAX_EVENTS = 200;
 let startTime = Date.now();
+let authToken = localStorage.getItem('nova_studio_token') || '';
 
 function showTab(name) {
   ['dashboard','events','config','control'].forEach(t => {
@@ -252,6 +310,10 @@ function controlLog(message) {
   row.textContent = `${new Date().toLocaleTimeString()} ${message}`;
   log.prepend(row);
   while (log.children.length > 50) log.lastChild.remove();
+}
+
+function authHeaders() {
+  return authToken ? {'Authorization': `Bearer ${authToken}`} : {};
 }
 
 function tagClass(type) {
@@ -315,12 +377,21 @@ function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
 async function postJson(url, method, payload) {
   const response = await fetch(url, {
     method,
-    headers: {'Content-Type': 'application/json'},
+    headers: {'Content-Type': 'application/json', ...authHeaders()},
     body: JSON.stringify(payload || {})
   });
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.reason || data.status || 'request failed');
+  }
+  return data;
+}
+
+async function getJson(url) {
+  const response = await fetch(url, {headers: {...authHeaders()}});
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || data.reason || data.status || 'request failed');
   }
   return data;
 }
@@ -338,14 +409,18 @@ function renderList(elementId, items, fields) {
 
 async function refreshControlPlane() {
   try {
-    const [tenants, roles, revisions] = await Promise.all([
-      fetch('/api/control/tenants?limit=20&offset=0').then(r => r.json()),
-      fetch('/api/control/roles?limit=20&offset=0').then(r => r.json()),
-      fetch('/api/control/config-revisions?limit=20&offset=0').then(r => r.json()),
+    const [tenants, roles, revisions, permissions, users] = await Promise.all([
+      getJson('/api/control/tenants?limit=20&offset=0'),
+      getJson('/api/control/roles?limit=20&offset=0'),
+      getJson('/api/control/config-revisions?limit=20&offset=0'),
+      getJson('/api/control/permissions?limit=20&offset=0'),
+      getJson('/api/control/users?limit=20&offset=0'),
     ]);
     renderList('tenant-list', tenants.items || [], ['id', 'slug', 'status', 'plan']);
     renderList('role-list', roles.items || [], ['id', 'tenant_id', 'name', 'scope']);
     renderList('revision-list', revisions.items || [], ['id', 'resource_type', 'resource_id', 'revision_no', 'status']);
+    renderList('permission-list', permissions.items || [], ['id', 'code', 'resource', 'action']);
+    renderList('user-list', users.items || [], ['id', 'tenant_id', 'email', 'status']);
   } catch (err) {
     controlLog(`refresh failed: ${err.message}`);
   }
@@ -381,6 +456,39 @@ async function createRole() {
     await refreshControlPlane();
   } catch (err) {
     controlLog(`role create failed: ${err.message}`);
+  }
+}
+
+async function createPermission() {
+  try {
+    const payload = {
+      id: document.getElementById('permission-id').value,
+      code: document.getElementById('permission-code').value,
+      resource: document.getElementById('permission-resource').value,
+      action: document.getElementById('permission-action').value,
+      description: document.getElementById('permission-description').value,
+    };
+    const result = await postJson('/api/control/permissions', 'POST', payload);
+    controlLog(`permission created: ${result.id}`);
+    await refreshControlPlane();
+  } catch (err) {
+    controlLog(`permission create failed: ${err.message}`);
+  }
+}
+
+async function createUser() {
+  try {
+    const payload = {
+      id: document.getElementById('user-id').value,
+      tenant_id: document.getElementById('user-tenant-id').value,
+      email: document.getElementById('user-email').value,
+      display_name: document.getElementById('user-display-name').value,
+    };
+    const result = await postJson('/api/control/users', 'POST', payload);
+    controlLog(`user created: ${result.id}`);
+    await refreshControlPlane();
+  } catch (err) {
+    controlLog(`user create failed: ${err.message}`);
   }
 }
 
@@ -431,6 +539,97 @@ async function rollbackRevision() {
   }
 }
 
+async function loadRolePermissions() {
+  try {
+    const roleId = document.getElementById('binding-role-id').value;
+    const result = await getJson(`/api/control/roles/${roleId}/permissions?limit=50&offset=0`);
+    renderList('role-permission-list', result.items || [], ['permission_id', 'code', 'resource', 'action']);
+  } catch (err) {
+    controlLog(`load role permissions failed: ${err.message}`);
+  }
+}
+
+async function setRolePermissions() {
+  try {
+    const roleId = document.getElementById('binding-role-id').value;
+    const permissionIds = document.getElementById('binding-permission-ids').value
+      .split(',')
+      .map(v => v.trim())
+      .filter(Boolean);
+    const result = await postJson(`/api/control/roles/${roleId}/permissions`, 'PUT', {permission_ids: permissionIds});
+    controlLog(`role permissions updated: ${result.id} (${result.permission_count})`);
+    await loadRolePermissions();
+  } catch (err) {
+    controlLog(`bind permissions failed: ${err.message}`);
+  }
+}
+
+async function loadUserRoles() {
+  try {
+    const userId = document.getElementById('binding-user-id').value;
+    const result = await getJson(`/api/control/users/${userId}/roles?limit=50&offset=0`);
+    renderList('user-role-list', result.items || [], ['role_id', 'name', 'scope']);
+  } catch (err) {
+    controlLog(`load user roles failed: ${err.message}`);
+  }
+}
+
+async function setUserRoles() {
+  try {
+    const userId = document.getElementById('binding-user-id').value;
+    const roleIds = document.getElementById('binding-role-ids').value
+      .split(',')
+      .map(v => v.trim())
+      .filter(Boolean);
+    const result = await postJson(`/api/control/users/${userId}/roles`, 'PUT', {role_ids: roleIds});
+    controlLog(`user roles updated: ${result.id} (${result.role_count})`);
+    await loadUserRoles();
+  } catch (err) {
+    controlLog(`bind user roles failed: ${err.message}`);
+  }
+}
+
+async function refreshCurrentUser() {
+  if (!authToken) {
+    const current = document.getElementById('current-user');
+    if (current) current.textContent = 'anonymous';
+    return;
+  }
+  try {
+    const me = await getJson('/api/auth/me');
+    const user = me.user || {};
+    const current = document.getElementById('current-user');
+    if (current) {
+      const tenant = user.tenant_id || (user.tenant_ids || []).join(',');
+      current.textContent = `${user.id || 'unknown'} @ ${tenant || 'n/a'}`;
+    }
+  } catch (err) {
+    controlLog(`auth refresh failed: ${err.message}`);
+  }
+}
+
+async function studioLogin() {
+  try {
+    const userId = document.getElementById('login-user-id').value.trim();
+    const result = await postJson('/api/auth/token', 'POST', {user_id: userId});
+    authToken = result.access_token;
+    localStorage.setItem('nova_studio_token', authToken);
+    await refreshCurrentUser();
+    await refreshControlPlane();
+    controlLog(`login ok: ${userId}`);
+  } catch (err) {
+    controlLog(`login failed: ${err.message}`);
+  }
+}
+
+function studioLogout() {
+  authToken = '';
+  localStorage.removeItem('nova_studio_token');
+  const current = document.getElementById('current-user');
+  if (current) current.textContent = 'anonymous';
+  controlLog('logged out');
+}
+
 // Periodic health check
 setInterval(async () => {
   try {
@@ -451,8 +650,7 @@ setInterval(async () => {
 
 setInterval(async () => {
   try {
-    const r = await fetch('/studio/api/status');
-    const d = await r.json();
+    const d = await getJson('/studio/api/status');
     document.getElementById('runtime-role').textContent = d.runtime?.role || 'unknown';
     document.getElementById('runtime-instance').textContent = d.runtime?.instance_name || 'unknown';
     document.getElementById('runtime-session').textContent = d.runtime?.session_id || 'unknown';
@@ -473,6 +671,7 @@ setInterval(async () => {
 }, 5000);
 
 setInterval(refreshControlPlane, 10000);
+refreshCurrentUser();
 refreshControlPlane();
 </script>
 </body>
@@ -505,9 +704,14 @@ async def studio_status(request: Request):
         )[:8]
     else:
         history_preview = []
+    current_user = getattr(request.state, "user", None)
     return JSONResponse({
         "status": "ok",
         "character": nova.personality.character_name if nova.personality else "NOVA",
+        "auth": {
+            "enabled": nova.settings.auth.enabled,
+            "current_user": current_user,
+        },
         "runtime": {
             "role": nova.settings.runtime.role,
             "instance_name": nova.settings.runtime.instance_name,

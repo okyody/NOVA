@@ -52,6 +52,25 @@ def test_docker_compose_uses_existing_monitoring_paths_and_nested_env_names() ->
     assert "./deploy/monitoring/prometheus/prometheus.yml" in compose
 
 
+def test_k8s_manifest_includes_worker_deployments_and_postgres_migration() -> None:
+    manifest = (ROOT / "deploy" / "k8s" / "nova-deployment.yaml").read_text(encoding="utf-8")
+
+    assert "name: nova-perception" in manifest
+    assert "name: nova-cognitive" in manifest
+    assert "name: nova-generation" in manifest
+    assert 'command: ["nova-worker", "perception"]' in manifest
+    assert 'command: ["nova-worker", "cognitive"]' in manifest
+    assert 'command: ["nova-worker", "generation"]' in manifest
+    assert "name: nova-postgres-migrate" in manifest
+    assert "kind: StatefulSet" in manifest
+    assert "storageClassName: standard" in manifest
+    assert "name: postgres-backup" in manifest
+    assert "create table if not exists public.permissions" in manifest
+    assert "create table if not exists public.role_permissions" in manifest
+    assert "create table if not exists public.users" in manifest
+    assert "create table if not exists public.user_roles" in manifest
+
+
 def test_example_platform_configs_can_instantiate_adapters() -> None:
     settings = load_settings(ROOT / "nova.config.example.json")
     bus = EventBus(queue_size=32)
