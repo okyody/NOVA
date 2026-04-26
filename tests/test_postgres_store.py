@@ -292,6 +292,9 @@ async def test_postgres_store_creates_and_lists_tenants_roles_and_revisions():
     assert roles[0]["id"] == "role-1"
     assert revisions[0]["id"] == "rev-1"
 
+    queries = "\n".join(call[0] for call in store._pool.calls)
+    assert 'tenant_id = $1' in queries or 'tenant_id = any($1::text[])' in queries
+
 
 @pytest.mark.asyncio
 async def test_postgres_store_updates_control_plane_records():
@@ -350,3 +353,59 @@ async def test_postgres_store_builds_user_auth_context():
     assert context is not None
     assert context["user"]["id"] == "user-1"
     assert "tenant-1" in context["tenant_ids"]
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_getters_support_tenant_scope():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+
+    await store.list_tenants(tenant_ids=["tenant-1"], limit=10, offset=0)
+    await store.list_roles(tenant_ids=["tenant-1"], limit=10, offset=0)
+    await store.list_users(tenant_ids=["tenant-1"], limit=10, offset=0)
+    await store.list_config_revisions(tenant_ids=["tenant-1"], limit=10, offset=0)
+    await store.get_role("role-1", tenant_ids=["tenant-1"])
+    await store.get_config_revision("rev-1", tenant_ids=["tenant-1"])
+
+    queries = "\n".join(call[0] for call in store._pool.calls)
+    assert "any(" in queries
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_revision_state_machine():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+    state = {"status": "draft"}
+
+    async def _fake_get_config_revision(revision_id: str, *, tenant_ids=None):
+        return {
+            "id": revision_id,
+            "tenant_id": "tenant-1",
+            "resource_type": "runtime",
+            "resource_id": "nova",
+            "status": state["status"],
+        }
+
+    async def _fake_set_config_revision_status(revision_id: str, status: str):
+        state["status"] = status
+
+    store.get_config_revision = _fake_get_config_revision  # type: ignore[method-assign]
+    store.set_config_revision_status = _fake_set_config_revision_status  # type: ignore[method-assign]
+    original_execute = store._pool.conn.execute
+
+    async def _execute_with_state(query, *args):
+        if "set status = 'published'" in query:
+            state["status"] = "published"
+        if "set status = 'rolled_back'" in query:
+            state["status"] = "rolled_back"
+        await original_execute(query, *args)
+
+    store._pool.conn.execute = _execute_with_state  # type: ignore[method-assign]
+
+    published = await store.publish_config_revision("rev-1", tenant_ids=["tenant-1"])
+    assert published["status"] == "published"
+    assert state["status"] == "published"
+
+    rolled_back = await store.rollback_config_revision("rev-1", tenant_ids=["tenant-1"])
+    assert rolled_back["status"] == "rolled_back"
+    assert state["status"] == "rolled_back"

@@ -587,21 +587,37 @@ class PostgresRuntimeStore:
                 *args,
             )
 
-    async def list_tenants(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    async def list_tenants(
+        self,
+        *,
+        tenant_ids: list[str] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
         if self._pool is None:
             return []
+        where_sql = ""
+        args: list[Any] = []
+        if tenant_ids:
+            args.append(tenant_ids)
+            where_sql = f"where id = any(${len(args)}::text[])"
+        args.extend([limit, offset])
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 f'''
                 select id, name, slug, status, plan, created_at, updated_at
                 from "{self._schema}".tenants
+                {where_sql}
                 order by created_at desc
-                limit $1 offset $2
+                limit ${len(args)-1} offset ${len(args)}
                 ''',
-                limit,
-                offset,
+                *args,
             )
         return [dict(r) for r in rows]
+
+    async def get_tenant(self, tenant_id: str) -> dict[str, Any] | None:
+        rows = await self.list_tenants(tenant_ids=[tenant_id], limit=1, offset=0)
+        return rows[0] if rows else None
 
     async def create_role(self, role_id: str, tenant_id: str, name: str, scope: str, description: str = "") -> None:
         if self._pool is None:
@@ -658,7 +674,14 @@ class PostgresRuntimeStore:
                 *args,
             )
 
-    async def list_roles(self, *, tenant_id: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    async def list_roles(
+        self,
+        *,
+        tenant_id: str | None = None,
+        tenant_ids: list[str] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
         if self._pool is None:
             return []
         clauses = []
@@ -666,6 +689,9 @@ class PostgresRuntimeStore:
         if tenant_id:
             args.append(tenant_id)
             clauses.append(f"tenant_id = ${len(args)}")
+        if tenant_ids:
+            args.append(tenant_ids)
+            clauses.append(f"tenant_id = any(${len(args)}::text[])")
         where_sql = f"where {' and '.join(clauses)}" if clauses else ""
         args.extend([limit, offset])
         async with self._pool.acquire() as conn:
@@ -680,6 +706,32 @@ class PostgresRuntimeStore:
                 *args,
             )
         return [dict(r) for r in rows]
+
+    async def get_role(
+        self,
+        role_id: str,
+        *,
+        tenant_ids: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        if self._pool is None:
+            return None
+        clauses = ["id = $1"]
+        args: list[Any] = [role_id]
+        if tenant_ids:
+            args.append(tenant_ids)
+            clauses.append(f"tenant_id = any(${len(args)}::text[])")
+        where_sql = " and ".join(clauses)
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, tenant_id, name, scope, description, created_at, updated_at
+                from "{self._schema}".roles
+                where {where_sql}
+                limit 1
+                ''',
+                *args,
+            )
+        return dict(rows[0]) if rows else None
 
     async def create_permission(
         self,
@@ -847,6 +899,7 @@ class PostgresRuntimeStore:
         self,
         *,
         tenant_id: str | None = None,
+        tenant_ids: list[str] | None = None,
         status: str | None = None,
         limit: int = 100,
         offset: int = 0,
@@ -858,6 +911,9 @@ class PostgresRuntimeStore:
         if tenant_id:
             args.append(tenant_id)
             clauses.append(f"tenant_id = ${len(args)}")
+        if tenant_ids:
+            args.append(tenant_ids)
+            clauses.append(f"tenant_id = any(${len(args)}::text[])")
         if status:
             args.append(status)
             clauses.append(f"status = ${len(args)}")
@@ -881,31 +937,39 @@ class PostgresRuntimeStore:
         *,
         user_id: str | None = None,
         email: str | None = None,
+        tenant_ids: list[str] | None = None,
     ) -> dict[str, Any] | None:
         if self._pool is None:
             return None
         if not user_id and not email:
             return None
         async with self._pool.acquire() as conn:
+            args: list[Any] = []
+            tenant_clause = ""
+            if tenant_ids:
+                args.append(tenant_ids)
+                tenant_clause = f" and tenant_id = any(${len(args)}::text[])"
             if user_id:
+                args.insert(0, user_id)
                 rows = await conn.fetch(
                     f'''
                     select id, tenant_id, email, display_name, status, created_at, updated_at
                     from "{self._schema}".users
-                    where id = $1
+                    where id = $1{tenant_clause}
                     limit 1
                     ''',
-                    user_id,
+                    *args,
                 )
             else:
+                args.insert(0, email)
                 rows = await conn.fetch(
                     f'''
                     select id, tenant_id, email, display_name, status, created_at, updated_at
                     from "{self._schema}".users
-                    where email = $1
+                    where email = $1{tenant_clause}
                     limit 1
                     ''',
-                    email,
+                    *args,
                 )
         return dict(rows[0]) if rows else None
 
@@ -1023,6 +1087,31 @@ class PostgresRuntimeStore:
                 json.dumps(config_json, ensure_ascii=False, default=str),
             )
 
+    async def get_config_revision(
+        self,
+        revision_id: str,
+        *,
+        tenant_ids: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        if self._pool is None:
+            return None
+        clauses = ["id = $1"]
+        args: list[Any] = [revision_id]
+        if tenant_ids:
+            args.append(tenant_ids)
+            clauses.append(f"tenant_id = any(${len(args)}::text[])")
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, tenant_id, resource_type, resource_id, revision_no, status, config_json, created_at
+                from "{self._schema}".config_revisions
+                where {' and '.join(clauses)}
+                limit 1
+                ''',
+                *args,
+            )
+        return dict(rows[0]) if rows else None
+
     async def update_config_revision(
         self,
         revision_id: str,
@@ -1067,12 +1156,67 @@ class PostgresRuntimeStore:
                 revision_id,
             )
 
+    async def publish_config_revision(
+        self,
+        revision_id: str,
+        *,
+        tenant_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        revision = await self.get_config_revision(revision_id, tenant_ids=tenant_ids)
+        if not revision:
+            raise ValueError("config revision not found")
+        if revision["status"] != "draft":
+            raise ValueError(f"only draft revisions can be published, got {revision['status']}")
+        if self._pool is None:
+            return revision
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f'''
+                update "{self._schema}".config_revisions
+                set status = 'rolled_back'
+                where tenant_id = $1
+                  and resource_type = $2
+                  and resource_id = $3
+                  and status = 'published'
+                ''',
+                revision["tenant_id"],
+                revision["resource_type"],
+                revision["resource_id"],
+            )
+            await conn.execute(
+                f'''
+                update "{self._schema}".config_revisions
+                set status = 'published'
+                where id = $1
+                ''',
+                revision_id,
+            )
+        revision["status"] = "published"
+        return revision
+
+    async def rollback_config_revision(
+        self,
+        revision_id: str,
+        *,
+        tenant_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        revision = await self.get_config_revision(revision_id, tenant_ids=tenant_ids)
+        if not revision:
+            raise ValueError("config revision not found")
+        if revision["status"] != "published":
+            raise ValueError(f"only published revisions can be rolled back, got {revision['status']}")
+        await self.set_config_revision_status(revision_id, "rolled_back")
+        revision["status"] = "rolled_back"
+        return revision
+
     async def list_config_revisions(
         self,
         *,
         tenant_id: str | None = None,
+        tenant_ids: list[str] | None = None,
         resource_type: str | None = None,
         resource_id: str | None = None,
+        status: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
@@ -1083,12 +1227,18 @@ class PostgresRuntimeStore:
         if tenant_id:
             args.append(tenant_id)
             clauses.append(f"tenant_id = ${len(args)}")
+        if tenant_ids:
+            args.append(tenant_ids)
+            clauses.append(f"tenant_id = any(${len(args)}::text[])")
         if resource_type:
             args.append(resource_type)
             clauses.append(f"resource_type = ${len(args)}")
         if resource_id:
             args.append(resource_id)
             clauses.append(f"resource_id = ${len(args)}")
+        if status:
+            args.append(status)
+            clauses.append(f"status = ${len(args)}")
         where_sql = f"where {' and '.join(clauses)}" if clauses else ""
         args.extend([limit, offset])
         async with self._pool.acquire() as conn:

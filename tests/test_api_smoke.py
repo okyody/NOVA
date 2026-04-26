@@ -90,13 +90,13 @@ def test_runtime_history_endpoints_with_fake_postgres_store() -> None:
         async def list_audit_logs(self, *, limit: int = 100, offset: int = 0, action=None, resource_type=None):
             return [{"id": "audit-1", "action": "runtime_session_started"}]
 
-        async def list_tenants(self, *, limit: int = 100, offset: int = 0):
+        async def list_tenants(self, *, tenant_ids=None, limit: int = 100, offset: int = 0):
             return [{"id": "tenant-1", "slug": "demo"}]
 
-        async def list_roles(self, *, tenant_id=None, limit: int = 100, offset: int = 0):
+        async def list_roles(self, *, tenant_id=None, tenant_ids=None, limit: int = 100, offset: int = 0):
             return [{"id": "role-1", "name": "admin"}]
 
-        async def list_config_revisions(self, *, tenant_id=None, resource_type=None, resource_id=None, limit: int = 100, offset: int = 0):
+        async def list_config_revisions(self, *, tenant_id=None, tenant_ids=None, resource_type=None, resource_id=None, status=None, limit: int = 100, offset: int = 0):
             return [{"id": "rev-1", "resource_type": "runtime"}]
 
         async def list_permissions(self, *, resource=None, action=None, limit: int = 100, offset: int = 0):
@@ -105,13 +105,13 @@ def test_runtime_history_endpoints_with_fake_postgres_store() -> None:
         async def list_role_permissions(self, *, role_id: str, limit: int = 100, offset: int = 0):
             return [{"role_id": role_id, "permission_id": "perm-1", "code": "tenant.read", "resource": "tenant", "action": "read"}]
 
-        async def list_users(self, *, tenant_id=None, status=None, limit: int = 100, offset: int = 0):
+        async def list_users(self, *, tenant_id=None, tenant_ids=None, status=None, limit: int = 100, offset: int = 0):
             return [{"id": "user-1", "tenant_id": "tenant-1", "email": "demo@example.com", "status": "active"}]
 
         async def list_user_roles(self, *, user_id: str, limit: int = 100, offset: int = 0):
             return [{"user_id": user_id, "role_id": "role-1", "name": "admin", "scope": "tenant"}]
 
-        async def get_user(self, *, user_id: str | None = None, email: str | None = None):
+        async def get_user(self, *, user_id: str | None = None, email: str | None = None, tenant_ids=None):
             return {
                 "id": user_id or "user-1",
                 "tenant_id": "tenant-1",
@@ -132,7 +132,7 @@ def test_runtime_history_endpoints_with_fake_postgres_store() -> None:
                 "tenant_ids": ["tenant-1"],
             }
 
-        async def get_user(self, *, user_id: str | None = None, email: str | None = None):
+        async def get_user(self, *, user_id: str | None = None, email: str | None = None, tenant_ids=None):
             return {"id": user_id or "user-1", "tenant_id": "tenant-1", "email": email or "demo@example.com", "display_name": "Demo User"}
 
         async def get_user_auth_context(self, *, user_id: str | None = None, email: str | None = None):
@@ -184,6 +184,18 @@ def test_runtime_history_endpoints_with_fake_postgres_store() -> None:
 
         async def set_config_revision_status(self, revision_id: str, status: str):
             self.revision_statuses.append(("status", revision_id, status))
+
+        async def get_role(self, role_id: str, *, tenant_ids=None):
+            return {"id": role_id, "tenant_id": "tenant-1", "name": "admin", "scope": "tenant"}
+
+        async def get_config_revision(self, revision_id: str, *, tenant_ids=None):
+            return {"id": revision_id, "tenant_id": "tenant-1", "status": "draft", "resource_type": "runtime", "resource_id": "nova"}
+
+        async def publish_config_revision(self, revision_id: str, *, tenant_ids=None):
+            return {"id": revision_id, "status": "published"}
+
+        async def rollback_config_revision(self, revision_id: str, *, tenant_ids=None):
+            return {"id": revision_id, "status": "rolled_back"}
 
         async def write_audit_log(self, action: str, resource_type: str, detail: dict, resource_id: str = ""):
             self.audit_calls.append((action, resource_type, resource_id, detail))
@@ -284,7 +296,7 @@ def test_control_plane_permission_enforced_when_auth_enabled() -> None:
                 "tenant_ids": ["tenant-1"],
             }
 
-        async def get_user(self, *, user_id: str | None = None, email: str | None = None):
+        async def get_user(self, *, user_id: str | None = None, email: str | None = None, tenant_ids=None):
             if user_id == "user-1":
                 return {
                     "id": "user-1",
@@ -297,10 +309,10 @@ def test_control_plane_permission_enforced_when_auth_enabled() -> None:
         async def user_has_permission(self, user_id: str, permission_code: str):
             return permission_code == "tenant.read"
 
-        async def list_tenants(self, *, limit: int = 100, offset: int = 0):
+        async def list_tenants(self, *, tenant_ids=None, limit: int = 100, offset: int = 0):
             return [{"id": "tenant-1", "slug": "demo"}]
 
-        async def list_users(self, *, tenant_id=None, status=None, limit: int = 100, offset: int = 0):
+        async def list_users(self, *, tenant_id=None, tenant_ids=None, status=None, limit: int = 100, offset: int = 0):
             return [{"id": "user-1", "tenant_id": "tenant-1", "email": "demo@example.com"}]
 
         async def stop(self):

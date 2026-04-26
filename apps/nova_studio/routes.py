@@ -176,6 +176,28 @@ STUDIO_HTML = """<!DOCTYPE html>
 
     <!-- Control Tab -->
     <div id="tab-control" style="display:none">
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Workbench</div>
+          <div class="text-xs text-white/60">User: <span id="auth-user-id">anonymous</span></div>
+          <div class="text-xs text-white/60">Tenant Scope: <span id="auth-tenant-scope">n/a</span></div>
+          <div class="text-xs text-white/60">Roles: <span id="auth-role-list">none</span></div>
+          <div class="text-xs text-white/60 mt-2">Permissions</div>
+          <div id="auth-permission-list" class="text-xs text-white/70 mt-1 max-h-[100px] overflow-auto"></div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Resource Navigation</div>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="showTab('control'); scrollIntoViewId('tenant-list')" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs">Tenants</button>
+            <button onclick="showTab('control'); scrollIntoViewId('user-list')" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs">Users</button>
+            <button onclick="showTab('control'); scrollIntoViewId('role-list')" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs">Roles</button>
+            <button onclick="showTab('control'); scrollIntoViewId('permission-list')" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs">Permissions</button>
+            <button onclick="showTab('control'); scrollIntoViewId('revision-list')" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs">Revisions</button>
+            <button onclick="showTab('events')" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs">Runtime Events</button>
+          </div>
+          <div class="text-xs text-white/40 mt-4">Use the control log below for API failures and operation traces.</div>
+        </div>
+      </div>
       <div class="grid grid-cols-3 gap-4 mb-4">
         <div class="card p-4">
           <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Create Tenant</div>
@@ -303,6 +325,10 @@ function showTab(name) {
 }
 
 function clearEvents() { eventList.innerHTML = ''; }
+function scrollIntoViewId(id) {
+  const node = document.getElementById(id);
+  if (node) node.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
 function controlLog(message) {
   const log = document.getElementById('control-log');
   const row = document.createElement('div');
@@ -593,6 +619,10 @@ async function refreshCurrentUser() {
   if (!authToken) {
     const current = document.getElementById('current-user');
     if (current) current.textContent = 'anonymous';
+    document.getElementById('auth-user-id').textContent = 'anonymous';
+    document.getElementById('auth-tenant-scope').textContent = 'n/a';
+    document.getElementById('auth-role-list').textContent = 'none';
+    document.getElementById('auth-permission-list').innerHTML = '';
     return;
   }
   try {
@@ -603,6 +633,17 @@ async function refreshCurrentUser() {
       const tenant = user.tenant_id || (user.tenant_ids || []).join(',');
       current.textContent = `${user.id || 'unknown'} @ ${tenant || 'n/a'}`;
     }
+    document.getElementById('auth-user-id').textContent = user.id || 'unknown';
+    document.getElementById('auth-tenant-scope').textContent = user.tenant_id || (user.tenant_ids || []).join(',') || 'n/a';
+    document.getElementById('auth-role-list').textContent = (user.roles || []).join(', ') || 'none';
+    const permList = document.getElementById('auth-permission-list');
+    permList.innerHTML = '';
+    (user.permissions || []).forEach((permission) => {
+      const row = document.createElement('div');
+      row.className = 'event-row';
+      row.textContent = permission;
+      permList.appendChild(row);
+    });
   } catch (err) {
     controlLog(`auth refresh failed: ${err.message}`);
   }
