@@ -22,25 +22,35 @@ to a production-ready Enterprise 1.0 product.
 - [x] Add compose-level startup validation in CI
 - [x] Add a minimal `/health` startup test using FastAPI TestClient
 - [x] Validate all platform config examples against platform manager
-- [ ] Normalize Windows/Linux startup paths in install scripts
+- [x] Normalize Windows/Linux startup paths in install scripts
 
 ## Phase 1: Productization Foundation
 
 - [~] Replace in-process event bus for multi-instance mode
   Current status: dual-mode EventBus with local/external_consumer switching and Redis Streams transport foundation is in place; full distributed worker graph still pending.
-- [ ] Externalize hot session state to Redis
-- [ ] Add deterministic idempotency keys for inbound platform events
+- [x] Externalize hot session state to Redis
+- [x] Add deterministic idempotency keys for inbound platform events
 - [~] Split runtime roles: api / ingestion / orchestration / voice workers
-  Current status: api/perception/cognitive/generation role-based startup and worker entrypoint are in place; compose-level end-to-end validation remains.
-- [ ] Introduce persistent conversation and safety event storage
+  Current status: api/perception/cognitive/generation role-based startup, worker entrypoint, and k8s worker deployments are in place; further rollout/ops hardening remains.
+- [x] Introduce persistent conversation and safety event storage
 
 ## Phase 2: Enterprise Control Plane
 
-- [ ] Add tenant, user, role, permission models
-- [ ] Add config revisioning and rollout management
-- [ ] Add audit logs for all write operations
+- [x] Add tenant, user, role, permission models
+- [~] Add config revisioning and rollout management
+  Current status: create/list/update/publish/rollback APIs exist; stricter revision state machine and rollout semantics still need hardening.
+- [x] Add audit logs for all write operations
 - [ ] Add knowledge base management with ACLs
-- [ ] Add runtime dashboard beyond the current debug-oriented Studio
+- [~] Add runtime dashboard beyond the current debug-oriented Studio
+  Current status: Studio now supports runtime status, control-plane reads/writes, and login-backed control requests; it still needs deeper workflow polish to become a complete admin workbench.
+
+## Phase 3: Acceptance
+
+- [x] Define Enterprise 1.0 acceptance scope
+- [x] Freeze core permission-code set for 1.0
+- [x] Add auth/me and DB-backed token issuance
+- [x] Enforce tenant-scoped control-plane access
+- [x] Align deploy SQL and k8s init schema with control-plane models
 
 ## Working Rule
 
