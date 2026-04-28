@@ -172,7 +172,10 @@ class APIKeyAuth:
     def verify(self, key: str) -> bool:
         if not self._valid_keys:
             return True  # No keys configured = no auth required
-        return hmac.compare_digest(key, key) and key in self._valid_keys
+        for valid_key in self._valid_keys:
+            if hmac.compare_digest(key, valid_key):
+                return True
+        return False
 
 
 # ─── FastAPI Middleware ───────────────────────────────────────────────────────
@@ -352,6 +355,11 @@ def setup_security_middleware(
     # Authentication
     jwt_auth = None
     if auth_enabled:
+        if jwt_secret == "change-me-in-production":
+            log.critical(
+                "⚠️  JWT secret is still the default value! "
+                "Set NOVA_AUTH_JWT_SECRET to a strong random string in production."
+            )
         jwt_auth = JWTAuth(secret=jwt_secret, expire_minutes=jwt_expire_minutes)
         api_key_auth = APIKeyAuth(valid_keys=api_keys or set())
         app.add_middleware(AuthMiddleware, jwt_auth=jwt_auth, api_key_auth=api_key_auth, enabled=True)

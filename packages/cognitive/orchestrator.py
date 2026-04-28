@@ -484,8 +484,8 @@ class Orchestrator:
                         "tool_call_id": tr["tool_call_id"],
                         "content": tr["content"],
                     })
-                # Continue LLM with tool results — reset full_text for next round
-                full_text = ""
+                # Continue LLM with tool results — keep full_text, only reset buffer
+                # full_text already contains pre-tool text; next LLM round appends to it
                 sentence_buffer = ""
                 tool_definitions = None  # Don't offer tools in follow-up
                 continue

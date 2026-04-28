@@ -168,6 +168,18 @@ class AuthConfig(BaseSettings):
         default_factory=lambda: ["http://localhost:3000", "http://localhost:8765"]
     )
 
+    @field_validator("jwt_secret")
+    @classmethod
+    def warn_default_jwt_secret(cls, v: SecretStr) -> SecretStr:
+        import warnings
+        if v.get_secret_value() == "change-me-in-production":
+            warnings.warn(
+                "JWT secret is set to the default value. "
+                "Set NOVA_AUTH_JWT_SECRET to a strong random string in production!",
+                stacklevel=2,
+            )
+        return v
+
 
 class ObservabilityConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="NOVA_OBSERVABILITY_")

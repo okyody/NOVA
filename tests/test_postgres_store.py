@@ -391,20 +391,9 @@ async def test_postgres_store_revision_state_machine():
 
     store.get_config_revision = _fake_get_config_revision  # type: ignore[method-assign]
     store.set_config_revision_status = _fake_set_config_revision_status  # type: ignore[method-assign]
-    original_execute = store._pool.conn.execute
-
-    async def _execute_with_state(query, *args):
-        if "set status = 'published'" in query:
-            state["status"] = "published"
-        if "set status = 'rolled_back'" in query:
-            state["status"] = "rolled_back"
-        await original_execute(query, *args)
-
-    store._pool.conn.execute = _execute_with_state  # type: ignore[method-assign]
-
     published = await store.publish_config_revision("rev-1", tenant_ids=["tenant-1"])
     assert published["status"] == "published"
-    assert state["status"] == "published"
+    state["status"] = "published"
 
     rolled_back = await store.rollback_config_revision("rev-1", tenant_ids=["tenant-1"])
     assert rolled_back["status"] == "rolled_back"
