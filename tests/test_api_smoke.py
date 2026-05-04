@@ -63,6 +63,8 @@ def test_studio_dashboard_contains_control_plane() -> None:
     assert "Control" in response.text
     assert "Create Tenant" in response.text
     assert "Save Config" in response.text
+    assert "Quick Start" in response.text
+    assert "Quick Actions" in response.text
 
 
 def test_config_current_and_save_roundtrip(tmp_path) -> None:

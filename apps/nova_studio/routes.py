@@ -78,6 +78,26 @@ STUDIO_HTML = """<!DOCTYPE html>
 
     <!-- Dashboard Tab -->
     <div id="tab-dashboard">
+      <div class="grid grid-cols-2 gap-4 mb-6">
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Quick Start</div>
+          <div class="text-xs text-white/50 mb-3">按这个顺序完成 1.0 交付链，不需要自己猜功能藏在哪里。</div>
+          <div id="startup-checklist" class="space-y-2 text-xs text-white/70"></div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Quick Actions</div>
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="showTab('config'); loadConfigForm()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-2 text-xs">打开设置面板</button>
+            <button onclick="showTab('control'); refreshControlPlane()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-2 text-xs">刷新控制平面</button>
+            <button onclick="reloadCharacterConfig()" class="bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 rounded px-2 py-2 text-xs">重载角色卡</button>
+            <button onclick="showTab('events')" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-2 text-xs">查看实时事件</button>
+            <button onclick="refreshCurrentUser()" class="bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 rounded px-2 py-2 text-xs">刷新当前用户</button>
+            <button onclick="loadConfigForm()" class="bg-green-500/20 hover:bg-green-500/30 text-green-200 rounded px-2 py-2 text-xs">重新加载配置</button>
+          </div>
+          <div id="dashboard-banner" class="mt-3 text-xs text-white/50">首次启动时，先在右上角登录，再到 Config 和 Control 完成配置。</div>
+        </div>
+      </div>
+
       <div class="grid grid-cols-4 gap-4 mb-6">
         <div class="card p-4">
           <div class="text-[10px] text-white/40 uppercase tracking-wider mb-1">Events/sec</div>
@@ -151,6 +171,21 @@ STUDIO_HTML = """<!DOCTYPE html>
           <div class="text-xs text-white/60">Instance: <span id="runtime-instance">unknown</span></div>
           <div class="text-xs text-white/60">Session: <span id="runtime-session">unknown</span></div>
           <div class="text-xs text-white/60">Hot State: <span id="runtime-hot">false</span></div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4 mt-4">
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Current User Context</div>
+          <div class="text-xs text-white/60">User: <span id="dash-auth-user">anonymous</span></div>
+          <div class="text-xs text-white/60">Tenant Scope: <span id="dash-auth-tenant">n/a</span></div>
+          <div class="text-xs text-white/60">Roles: <span id="dash-auth-roles">none</span></div>
+          <div class="text-xs text-white/60">Permission Count: <span id="dash-auth-permission-count">0</span></div>
+          <div class="text-xs text-white/40 mt-3">当前登录身份会直接影响 Control 页能看到和能操作的资源。</div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Environment Readiness</div>
+          <div id="environment-summary" class="space-y-2 text-xs text-white/70"></div>
         </div>
       </div>
     </div>
@@ -365,6 +400,9 @@ const eventList = document.getElementById('event-list');
 const MAX_EVENTS = 200;
 let startTime = Date.now();
 let authToken = localStorage.getItem('nova_studio_token') || '';
+let lastStudioStatus = null;
+let lastConfigState = null;
+let lastHealthState = null;
 
 function showTab(name) {
   ['dashboard','events','config','control'].forEach(t => {
@@ -384,6 +422,17 @@ function controlLog(message) {
   row.textContent = `${new Date().toLocaleTimeString()} ${message}`;
   log.prepend(row);
   while (log.children.length > 50) log.lastChild.remove();
+}
+
+function setDashboardBanner(message, tone='neutral') {
+  const node = document.getElementById('dashboard-banner');
+  node.textContent = message;
+  node.className = 'mt-3 text-xs ' + (
+    tone === 'error' ? 'text-red-300' :
+    tone === 'warn' ? 'text-amber-300' :
+    tone === 'ok' ? 'text-emerald-300' :
+    'text-white/50'
+  );
 }
 
 function authHeaders() {
@@ -483,7 +532,61 @@ function configSummary(config) {
   ].join(' | ');
 }
 
+function renderStartupChecklist() {
+  const target = document.getElementById('startup-checklist');
+  if (!target) return;
+  const authUser = document.getElementById('dash-auth-user')?.textContent || 'anonymous';
+  const configReady = !!lastConfigState?.config_path;
+  const runtimeReady = !!lastHealthState?.status;
+  const controlReady = !!document.getElementById('tenant-list')?.children?.length;
+  const steps = [
+    {label: '1. 服务已启动并可访问工作台', done: runtimeReady, action: "showTab('dashboard')"},
+    {label: '2. 使用有效用户登录 Studio', done: authUser !== 'anonymous', action: ''},
+    {label: '3. 检查并保存当前运行配置', done: configReady, action: "showTab('config'); loadConfigForm()"},
+    {label: '4. 创建租户、用户、角色、权限', done: controlReady, action: "showTab('control'); refreshControlPlane()"},
+    {label: '5. 发布 revision 并查看事件/历史', done: !!lastStudioStatus?.history, action: "showTab('control')"},
+  ];
+  target.innerHTML = '';
+  steps.forEach((step) => {
+    const row = document.createElement('div');
+    row.className = 'flex items-center justify-between gap-3 bg-black/10 rounded px-3 py-2';
+    row.innerHTML = `<div><span class="${step.done ? 'text-emerald-300' : 'text-amber-300'}">${step.done ? '●' : '○'}</span> ${step.label}</div>`;
+    if (step.action) {
+      const button = document.createElement('button');
+      button.className = 'bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-[11px]';
+      button.textContent = '前往';
+      button.setAttribute('onclick', step.action);
+      row.appendChild(button);
+    }
+    target.appendChild(row);
+  });
+}
+
+function renderEnvironmentSummary() {
+  const target = document.getElementById('environment-summary');
+  if (!target) return;
+  const status = lastStudioStatus || {};
+  const config = lastConfigState || {};
+  const authEnabled = config.runtime?.auth_enabled ?? status.auth?.enabled ?? false;
+  const hotState = status.runtime?.hot_state ?? false;
+  const items = [
+    `Config File: ${config.config_path || '未加载'}`,
+    `Auth: ${authEnabled ? 'enabled' : 'disabled'}`,
+    `Hot State: ${hotState ? 'enabled' : 'disabled'}`,
+    `History: ${(status.history?.conversation_count || 0)} convo / ${(status.history?.safety_count || 0)} safety`,
+    `Bus Pending/Lag: ${(status.bus?.pending || 0)} / ${(status.bus?.consumer_lag || status.bus?.lag || 0)}`,
+  ];
+  target.innerHTML = '';
+  items.forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'event-row';
+    row.textContent = item;
+    target.appendChild(row);
+  });
+}
+
 function fillConfigForm(configPath, config) {
+  lastConfigState = {config_path: configPath, config_json: config};
   document.getElementById('config-path').textContent = configPath || 'nova.config.json';
   document.getElementById('config-display').textContent = configSummary(config || {});
   document.getElementById('config-json-preview').value = JSON.stringify(config || {}, null, 2);
@@ -499,6 +602,8 @@ function fillConfigForm(configPath, config) {
   document.getElementById('cfg-persistence-backend').value = config.persistence?.backend || 'json';
   document.getElementById('cfg-postgres-url').value = config.persistence?.postgres_url || '';
   document.getElementById('cfg-redis-url').value = config.persistence?.redis_url || '';
+  renderEnvironmentSummary();
+  renderStartupChecklist();
 }
 
 function collectConfigPayload() {
@@ -537,9 +642,11 @@ async function loadConfigForm() {
     const result = await getJson('/api/config/current');
     fillConfigForm(result.config_path, result.config_json || {});
     document.getElementById('config-save-status').textContent = 'Settings loaded from disk.';
+    setDashboardBanner('配置已加载，可直接在 Config 页编辑并保存。', 'ok');
   } catch (err) {
     controlLog(`config load failed: ${err.message}`);
     document.getElementById('config-save-status').textContent = `Load failed: ${err.message}`;
+    setDashboardBanner(`配置加载失败：${err.message}`, 'error');
   }
 }
 
@@ -552,10 +659,17 @@ async function saveConfigForm() {
         ? 'Config saved. Restart required for some changes.'
         : 'Config saved. Live settings updated where safe.';
     controlLog(`config saved: ${result.config_path}`);
+    setDashboardBanner(
+      result.restart_required
+        ? '配置已保存，部分改动需要重启 EXE 才会生效。'
+        : '配置已保存，当前可安全热更新的设置已生效。',
+      result.restart_required ? 'warn' : 'ok'
+    );
     await loadConfigForm();
   } catch (err) {
     controlLog(`config save failed: ${err.message}`);
     document.getElementById('config-save-status').textContent = `Save failed: ${err.message}`;
+    setDashboardBanner(`配置保存失败：${err.message}`, 'error');
   }
 }
 
@@ -564,9 +678,11 @@ async function reloadCharacterConfig() {
     const result = await postJson('/api/config/reload', 'POST', {});
     document.getElementById('config-save-status').textContent = `Character reloaded: ${result.character || 'ok'}`;
     controlLog(`character reload ok: ${result.character || 'ok'}`);
+    setDashboardBanner(`角色卡已重载：${result.character || 'ok'}`, 'ok');
   } catch (err) {
     controlLog(`character reload failed: ${err.message}`);
     document.getElementById('config-save-status').textContent = `Reload failed: ${err.message}`;
+    setDashboardBanner(`角色卡重载失败：${err.message}`, 'error');
   }
 }
 
@@ -767,10 +883,15 @@ async function refreshCurrentUser() {
   if (!authToken) {
     const current = document.getElementById('current-user');
     if (current) current.textContent = 'anonymous';
+    document.getElementById('dash-auth-user').textContent = 'anonymous';
+    document.getElementById('dash-auth-tenant').textContent = 'n/a';
+    document.getElementById('dash-auth-roles').textContent = 'none';
+    document.getElementById('dash-auth-permission-count').textContent = '0';
     document.getElementById('auth-user-id').textContent = 'anonymous';
     document.getElementById('auth-tenant-scope').textContent = 'n/a';
     document.getElementById('auth-role-list').textContent = 'none';
     document.getElementById('auth-permission-list').innerHTML = '';
+    renderStartupChecklist();
     return;
   }
   try {
@@ -781,6 +902,10 @@ async function refreshCurrentUser() {
       const tenant = user.tenant_id || (user.tenant_ids || []).join(',');
       current.textContent = `${user.id || 'unknown'} @ ${tenant || 'n/a'}`;
     }
+    document.getElementById('dash-auth-user').textContent = user.id || 'unknown';
+    document.getElementById('dash-auth-tenant').textContent = user.tenant_id || (user.tenant_ids || []).join(',') || 'n/a';
+    document.getElementById('dash-auth-roles').textContent = (user.roles || []).join(', ') || 'none';
+    document.getElementById('dash-auth-permission-count').textContent = String((user.permissions || []).length);
     document.getElementById('auth-user-id').textContent = user.id || 'unknown';
     document.getElementById('auth-tenant-scope').textContent = user.tenant_id || (user.tenant_ids || []).join(',') || 'n/a';
     document.getElementById('auth-role-list').textContent = (user.roles || []).join(', ') || 'none';
@@ -792,8 +917,10 @@ async function refreshCurrentUser() {
       row.textContent = permission;
       permList.appendChild(row);
     });
+    renderStartupChecklist();
   } catch (err) {
     controlLog(`auth refresh failed: ${err.message}`);
+    setDashboardBanner(`用户上下文刷新失败：${err.message}`, 'warn');
   }
 }
 
@@ -806,8 +933,10 @@ async function studioLogin() {
     await refreshCurrentUser();
     await refreshControlPlane();
     controlLog(`login ok: ${userId}`);
+    setDashboardBanner(`登录成功：${userId}`, 'ok');
   } catch (err) {
     controlLog(`login failed: ${err.message}`);
+    setDashboardBanner(`登录失败：${err.message}`, 'error');
   }
 }
 
@@ -816,7 +945,13 @@ function studioLogout() {
   localStorage.removeItem('nova_studio_token');
   const current = document.getElementById('current-user');
   if (current) current.textContent = 'anonymous';
+  document.getElementById('dash-auth-user').textContent = 'anonymous';
+  document.getElementById('dash-auth-tenant').textContent = 'n/a';
+  document.getElementById('dash-auth-roles').textContent = 'none';
+  document.getElementById('dash-auth-permission-count').textContent = '0';
   controlLog('logged out');
+  setDashboardBanner('已退出登录。需要控制面权限时，请重新登录。', 'warn');
+  renderStartupChecklist();
 }
 
 // Periodic health check
@@ -824,6 +959,7 @@ setInterval(async () => {
   try {
     const r = await fetch('/health');
     const d = await r.json();
+    lastHealthState = d;
     document.getElementById('blocks').textContent = d.safety?.blocks || 0;
     document.getElementById('queue').textContent = d.bus?.queue_depth || 0;
     document.getElementById('consumer-lag').textContent = d.eventbus?.lag || 0;
@@ -831,15 +967,19 @@ setInterval(async () => {
     document.getElementById('retries').textContent = d.eventbus?.retries || 0;
     document.getElementById('dlq').textContent = d.eventbus?.dlq_length || 0;
     document.getElementById('char-name').textContent = d.character || 'NOVA';
+    document.getElementById('platforms').textContent = Object.keys(d.platforms || {}).length;
     const uptime = Math.floor((Date.now() - startTime) / 1000);
     const m = Math.floor(uptime / 60), s = uptime % 60;
     document.getElementById('uptime').textContent = `${m}m ${s}s`;
+    renderEnvironmentSummary();
+    renderStartupChecklist();
   } catch(e) {}
 }, 5000);
 
 setInterval(async () => {
   try {
     const d = await getJson('/studio/api/status');
+    lastStudioStatus = d;
     document.getElementById('runtime-role').textContent = d.runtime?.role || 'unknown';
     document.getElementById('runtime-instance').textContent = d.runtime?.instance_name || 'unknown';
     document.getElementById('runtime-session').textContent = d.runtime?.session_id || 'unknown';
@@ -856,6 +996,8 @@ setInterval(async () => {
       row.textContent = `${item.kind}: ${item.text}`;
       preview.appendChild(row);
     });
+    renderEnvironmentSummary();
+    renderStartupChecklist();
   } catch(e) {}
 }, 5000);
 
