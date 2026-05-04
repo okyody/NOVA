@@ -168,9 +168,57 @@ STUDIO_HTML = """<!DOCTYPE html>
 
     <!-- Config Tab -->
     <div id="tab-config" style="display:none">
-      <div class="card p-4">
-        <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Character Config</div>
-        <div class="text-xs text-white/60" id="config-display">Loading…</div>
+      <div class="grid grid-cols-2 gap-4">
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Settings Workbench</div>
+          <div class="text-xs text-white/40 mb-3">Config File: <span id="config-path">loading…</span></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <div class="text-[10px] text-white/40 uppercase tracking-wider mb-2">Core Runtime</div>
+              <div class="flex flex-col gap-2">
+                <input id="cfg-port" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="port">
+                <input id="cfg-runtime-role" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="role (all/api/perception/cognitive/generation)">
+                <label class="text-xs text-white/70 flex items-center gap-2"><input type="checkbox" id="cfg-auth-enabled"> Auth Enabled</label>
+              </div>
+            </div>
+            <div>
+              <div class="text-[10px] text-white/40 uppercase tracking-wider mb-2">LLM</div>
+              <div class="flex flex-col gap-2">
+                <input id="cfg-llm-base-url" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="LLM base URL">
+                <input id="cfg-llm-model" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="LLM model">
+              </div>
+            </div>
+            <div>
+              <div class="text-[10px] text-white/40 uppercase tracking-wider mb-2">Character & Voice</div>
+              <div class="flex flex-col gap-2">
+                <input id="cfg-character-path" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="character path">
+                <input id="cfg-voice-backend" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="voice backend">
+                <input id="cfg-voice-id" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="voice id">
+              </div>
+            </div>
+            <div>
+              <div class="text-[10px] text-white/40 uppercase tracking-wider mb-2">Knowledge & Persistence</div>
+              <div class="flex flex-col gap-2">
+                <label class="text-xs text-white/70 flex items-center gap-2"><input type="checkbox" id="cfg-knowledge-enabled"> Knowledge Enabled</label>
+                <input id="cfg-persistence-backend" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="persistence backend">
+                <input id="cfg-postgres-url" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="postgres url">
+                <input id="cfg-redis-url" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs" placeholder="redis url">
+              </div>
+            </div>
+          </div>
+          <div class="flex gap-2 mt-4">
+            <button onclick="loadConfigForm()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs">Reload Settings</button>
+            <button onclick="saveConfigForm()" class="bg-green-500/20 hover:bg-green-500/30 text-green-200 rounded px-2 py-1 text-xs">Save Config</button>
+            <button onclick="reloadCharacterConfig()" class="bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 rounded px-2 py-1 text-xs">Reload Character</button>
+          </div>
+          <div class="text-xs text-white/40 mt-3" id="config-save-status">Settings are persisted to nova.config.json. Runtime restart is only required for structural changes.</div>
+        </div>
+        <div class="card p-4">
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Effective Config Summary</div>
+          <div class="text-xs text-white/60 mb-3" id="config-display">Loading…</div>
+          <div class="text-[10px] text-white/40 uppercase tracking-wider mb-2">Advanced JSON Preview</div>
+          <textarea id="config-json-preview" class="w-full h-[420px] bg-black/20 border border-white/10 rounded px-2 py-2 text-xs text-white/70"></textarea>
+        </div>
       </div>
     </div>
 
@@ -420,6 +468,106 @@ async function getJson(url) {
     throw new Error(data.detail || data.reason || data.status || 'request failed');
   }
   return data;
+}
+
+function configSummary(config) {
+  return [
+    `Port: ${config.port ?? '8765'}`,
+    `Role: ${config.runtime?.role || 'all'}`,
+    `Auth: ${config.auth?.enabled ? 'enabled' : 'disabled'}`,
+    `LLM: ${config.llm?.model || 'n/a'}`,
+    `Character: ${config.character?.path || 'n/a'}`,
+    `Voice: ${config.voice?.backend || 'n/a'} / ${config.voice?.voice_id || 'n/a'}`,
+    `Knowledge: ${config.knowledge?.enabled ? 'enabled' : 'disabled'}`,
+    `Persistence: ${config.persistence?.backend || 'n/a'}`,
+  ].join(' | ');
+}
+
+function fillConfigForm(configPath, config) {
+  document.getElementById('config-path').textContent = configPath || 'nova.config.json';
+  document.getElementById('config-display').textContent = configSummary(config || {});
+  document.getElementById('config-json-preview').value = JSON.stringify(config || {}, null, 2);
+  document.getElementById('cfg-port').value = config.port ?? 8765;
+  document.getElementById('cfg-runtime-role').value = config.runtime?.role || 'all';
+  document.getElementById('cfg-auth-enabled').checked = !!config.auth?.enabled;
+  document.getElementById('cfg-llm-base-url').value = config.llm?.base_url || '';
+  document.getElementById('cfg-llm-model').value = config.llm?.model || '';
+  document.getElementById('cfg-character-path').value = config.character?.path || '';
+  document.getElementById('cfg-voice-backend').value = config.voice?.backend || '';
+  document.getElementById('cfg-voice-id').value = config.voice?.voice_id || '';
+  document.getElementById('cfg-knowledge-enabled').checked = !!config.knowledge?.enabled;
+  document.getElementById('cfg-persistence-backend').value = config.persistence?.backend || 'json';
+  document.getElementById('cfg-postgres-url').value = config.persistence?.postgres_url || '';
+  document.getElementById('cfg-redis-url').value = config.persistence?.redis_url || '';
+}
+
+function collectConfigPayload() {
+  return {
+    port: Number(document.getElementById('cfg-port').value || '8765'),
+    llm: {
+      base_url: document.getElementById('cfg-llm-base-url').value.trim(),
+      model: document.getElementById('cfg-llm-model').value.trim(),
+    },
+    voice: {
+      backend: document.getElementById('cfg-voice-backend').value.trim() || 'edge_tts',
+      voice_id: document.getElementById('cfg-voice-id').value.trim(),
+    },
+    character: {
+      path: document.getElementById('cfg-character-path').value.trim(),
+    },
+    knowledge: {
+      enabled: document.getElementById('cfg-knowledge-enabled').checked,
+    },
+    persistence: {
+      backend: document.getElementById('cfg-persistence-backend').value.trim() || 'json',
+      postgres_url: document.getElementById('cfg-postgres-url').value.trim(),
+      redis_url: document.getElementById('cfg-redis-url').value.trim(),
+    },
+    auth: {
+      enabled: document.getElementById('cfg-auth-enabled').checked,
+    },
+    runtime: {
+      role: document.getElementById('cfg-runtime-role').value.trim() || 'all',
+    },
+  };
+}
+
+async function loadConfigForm() {
+  try {
+    const result = await getJson('/api/config/current');
+    fillConfigForm(result.config_path, result.config_json || {});
+    document.getElementById('config-save-status').textContent = 'Settings loaded from disk.';
+  } catch (err) {
+    controlLog(`config load failed: ${err.message}`);
+    document.getElementById('config-save-status').textContent = `Load failed: ${err.message}`;
+  }
+}
+
+async function saveConfigForm() {
+  try {
+    const payload = {config_json: collectConfigPayload()};
+    const result = await postJson('/api/config/current', 'POST', payload);
+    document.getElementById('config-save-status').textContent =
+      result.restart_required
+        ? 'Config saved. Restart required for some changes.'
+        : 'Config saved. Live settings updated where safe.';
+    controlLog(`config saved: ${result.config_path}`);
+    await loadConfigForm();
+  } catch (err) {
+    controlLog(`config save failed: ${err.message}`);
+    document.getElementById('config-save-status').textContent = `Save failed: ${err.message}`;
+  }
+}
+
+async function reloadCharacterConfig() {
+  try {
+    const result = await postJson('/api/config/reload', 'POST', {});
+    document.getElementById('config-save-status').textContent = `Character reloaded: ${result.character || 'ok'}`;
+    controlLog(`character reload ok: ${result.character || 'ok'}`);
+  } catch (err) {
+    controlLog(`character reload failed: ${err.message}`);
+    document.getElementById('config-save-status').textContent = `Reload failed: ${err.message}`;
+  }
 }
 
 function renderList(elementId, items, fields) {
@@ -714,6 +862,7 @@ setInterval(async () => {
 setInterval(refreshControlPlane, 10000);
 refreshCurrentUser();
 refreshControlPlane();
+loadConfigForm();
 </script>
 </body>
 </html>"""

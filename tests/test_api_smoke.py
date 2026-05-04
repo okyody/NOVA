@@ -62,6 +62,60 @@ def test_studio_dashboard_contains_control_plane() -> None:
     assert response.status_code == 200
     assert "Control" in response.text
     assert "Create Tenant" in response.text
+    assert "Save Config" in response.text
+
+
+def test_config_current_and_save_roundtrip(tmp_path) -> None:
+    config_path = tmp_path / "nova.config.json"
+    config_path.write_text(
+        """
+        {
+          "port": 8765,
+          "llm": {"base_url": "http://localhost:11434/v1", "model": "qwen2.5:14b"},
+          "voice": {"backend": "edge_tts", "voice_id": "zh-CN-XiaoyiNeural"},
+          "character": {"path": "characters/nova_default.toml"},
+          "knowledge": {"enabled": false},
+          "persistence": {"backend": "json", "redis_url": "redis://localhost:6379", "postgres_url": "postgresql://nova:nova@localhost:5432/nova"},
+          "auth": {"enabled": false},
+          "runtime": {"role": "all"}
+        }
+        """,
+        encoding="utf-8",
+    )
+    settings = _smoke_settings()
+    settings.config_path = config_path
+    app = attach_runtime_routes(create_app(settings_override=settings))
+
+    with TestClient(app) as client:
+        current = client.get("/api/config/current")
+        saved = client.post(
+            "/api/config/current",
+            json={
+                "config_json": {
+                    "port": 8877,
+                    "llm": {"base_url": "http://localhost:11434/v1", "model": "qwen2.5:32b"},
+                    "voice": {"backend": "edge_tts", "voice_id": "zh-CN-XiaoxiaoNeural"},
+                    "character": {"path": str(ROOT / "characters" / "nova_default.toml")},
+                    "knowledge": {"enabled": True},
+                    "persistence": {
+                        "backend": "redis",
+                        "redis_url": "redis://localhost:6379",
+                        "postgres_url": "postgresql://nova:nova@localhost:5432/nova",
+                    },
+                    "auth": {"enabled": True},
+                    "runtime": {"role": "api"},
+                }
+            },
+        )
+
+    assert current.status_code == 200
+    assert current.json()["config_path"] == str(config_path)
+    assert current.json()["config_json"]["llm"]["model"] == "qwen2.5:14b"
+    assert saved.status_code == 200
+    assert saved.json()["status"] == "saved"
+    assert saved.json()["restart_required"] is True
+    persisted = config_path.read_text(encoding="utf-8")
+    assert '"model": "qwen2.5:32b"' in persisted
 
 
 def test_runtime_history_endpoints_with_fake_postgres_store() -> None:

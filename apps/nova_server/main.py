@@ -35,6 +35,7 @@ FastAPI provides:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 from contextlib import asynccontextmanager
@@ -843,6 +844,154 @@ async def reload_config(request: Request):
     return JSONResponse({"status": "no character path configured"}, status_code=400)
 
 
+def _resolve_config_path(nova: NovaApp) -> Path:
+    path = Path(nova.settings.config_path)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path
+
+
+def _read_config_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _settings_to_config_json(settings: NovaSettings) -> dict[str, Any]:
+    return {
+        "port": settings.port,
+        "llm": {
+            "base_url": settings.llm.base_url,
+            "model": settings.llm.model,
+        },
+        "voice": {
+            "backend": settings.voice.backend,
+            "voice_id": settings.voice.voice_id,
+        },
+        "character": {
+            "path": settings.character.path,
+        },
+        "knowledge": {
+            "enabled": settings.knowledge.enabled,
+        },
+        "persistence": {
+            "backend": settings.persistence.backend,
+            "redis_url": settings.persistence.redis_url,
+            "postgres_url": settings.persistence.postgres_url,
+        },
+        "auth": {
+            "enabled": settings.auth.enabled,
+        },
+        "runtime": {
+            "role": settings.runtime.role,
+        },
+    }
+
+
+def _validate_config_json(config_json: dict[str, Any], config_path: Path) -> NovaSettings:
+    payload = dict(config_json)
+    payload.setdefault("config_path", str(config_path))
+    return NovaSettings(**payload)
+
+
+@app.get("/api/config/current")
+async def current_config(request: Request):
+    """Return the persisted config document for the Studio settings workbench."""
+    nova = request.app.state.nova
+    if nova.settings.auth.enabled:
+        await require_permission(request, "config_revision.read")
+    config_path = _resolve_config_path(nova)
+    config_json = _read_config_json(config_path)
+    if not config_json:
+        config_json = _settings_to_config_json(nova.settings)
+    return {
+        "status": "ok",
+        "config_path": str(config_path),
+        "config_json": config_json,
+        "runtime": {
+            "role": nova.settings.runtime.role,
+            "port": nova.settings.port,
+            "auth_enabled": nova.settings.auth.enabled,
+        },
+    }
+
+
+@app.post("/api/config/current")
+async def save_current_config(request: Request):
+    """
+    Persist the Studio-edited config file.
+
+    This intentionally only writes validated config and reports whether a full
+    runtime restart is required. Character card changes are hot-reloaded.
+    """
+    nova = request.app.state.nova
+    if nova.settings.auth.enabled:
+        await require_permission(request, "config_revision.write")
+    body = await request.json()
+    config_json = body.get("config_json", body)
+    if not isinstance(config_json, dict):
+        return JSONResponse({"status": "validation_error", "reason": "config_json must be an object"}, status_code=400)
+
+    config_path = _resolve_config_path(nova)
+    try:
+        validated = _validate_config_json(config_json, config_path)
+    except Exception as exc:
+        return JSONResponse({"status": "validation_error", "reason": str(exc)}, status_code=400)
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config_json, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    previous = nova.settings
+    old_character_path = previous.character.path
+    new_character_path = validated.character.path
+    nova.settings = validated
+
+    character_reloaded = False
+    if nova.personality and new_character_path and new_character_path != old_character_path:
+        from packages.cognitive.personality_agent import CharacterCard
+
+        char_path = Path(new_character_path)
+        if char_path.exists():
+            nova.personality.character = CharacterCard.from_toml(char_path)
+            character_reloaded = True
+
+    restart_required = any(
+        [
+            validated.port != previous.port,
+            validated.auth.enabled != previous.auth.enabled,
+            validated.runtime.role != previous.runtime.role,
+            validated.persistence.backend != previous.persistence.backend,
+            validated.knowledge.enabled != previous.knowledge.enabled,
+            validated.voice.backend != previous.voice.backend,
+        ]
+    )
+
+    if nova.postgres_store:
+        await nova.postgres_store.write_audit_log(
+            "config_file_saved",
+            "config_file",
+            {
+                "path": str(config_path),
+                "restart_required": restart_required,
+                "character_reloaded": character_reloaded,
+            },
+            resource_id=str(config_path),
+        )
+
+    return {
+        "status": "saved",
+        "config_path": str(config_path),
+        "restart_required": restart_required,
+        "character_reloaded": character_reloaded,
+    }
+
+
 @app.post("/api/knowledge/ingest")
 async def ingest_knowledge(request: Request):
     """Ingest text into the knowledge base for RAG retrieval."""
@@ -1514,6 +1663,8 @@ def attach_runtime_routes(target_app: FastAPI) -> FastAPI:
     """Attach NOVA runtime routes to an app instance created for tests."""
     target_app.add_api_route("/health", health, methods=["GET"])
     target_app.add_api_route("/metrics", metrics, methods=["GET"])
+    target_app.add_api_route("/api/config/current", current_config, methods=["GET"])
+    target_app.add_api_route("/api/config/current", save_current_config, methods=["POST"])
     target_app.add_api_route("/api/config/reload", reload_config, methods=["POST"])
     target_app.add_api_route("/api/knowledge/ingest", ingest_knowledge, methods=["POST"])
     target_app.add_api_route("/api/knowledge/stats", knowledge_stats, methods=["GET"])
@@ -1562,6 +1713,7 @@ def main():
         port=settings.port,
         reload=settings.debug,
         log_level=settings.observability.log_level.lower(),
+        log_config=None,
     )
 
 
