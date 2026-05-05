@@ -53,7 +53,7 @@ from packages.core.config import NovaSettings, load_settings
 
 # ── Component imports ─────────────────────────────────────────────────────────
 from packages.core.event_bus import EventBus, create_event_transport_backend
-from packages.core.types import Platform
+from packages.core.types import EventType, Platform
 from packages.perception.semantic_aggregator import SemanticAggregator
 from packages.perception.silence_detector import SilenceDetector
 from packages.perception.context_sensor import ContextSensor
