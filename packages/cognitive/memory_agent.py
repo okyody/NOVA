@@ -21,7 +21,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from packages.core.event_bus import EventBus
 from packages.core.types import (
@@ -193,6 +193,36 @@ class ViewerGraph:
         return f"Top viewers: {names}. Total unique viewers: {len(self._nodes)}."
 
 
+class DisabledMemoryAgent:
+    """Null-object memory agent used when memory is intentionally disabled."""
+
+    def __init__(self) -> None:
+        self.viewer_graph = ViewerGraph()
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+    async def recall(
+        self,
+        query: str,
+        viewer_id: str | None = None,
+        top_k: int = 5,
+    ) -> dict[str, Any]:
+        return {
+            "recent": "(memory disabled)",
+            "episodic_hints": [],
+            "viewer_node": None,
+            "viewer_summary": "Memory disabled.",
+            "total_viewers": 0,
+        }
+
+    async def publish_recall(self, query: str, viewer_id: str | None = None) -> None:
+        return None
+
+
 # ─── Memory Agent ─────────────────────────────────────────────────────────────
 
 class MemoryAgent:
@@ -204,14 +234,25 @@ class MemoryAgent:
     CONSOLIDATE_EVERY_N = 30
     CONSOLIDATE_EVERY_S = 300     # 5 minutes
 
-    def __init__(self, bus: EventBus) -> None:
+    def __init__(
+        self,
+        bus: EventBus,
+        *,
+        working_memory_maxlen: int = 50,
+        consolidate_every_n: int | None = None,
+        consolidate_every_s: int | None = None,
+        can_consolidate: Callable[[], bool] | None = None,
+    ) -> None:
         self._bus          = bus
-        self.working       = WorkingMemory(maxlen=50)
+        self.working       = WorkingMemory(maxlen=working_memory_maxlen)
         self.episodic      = EpisodicMemory()
         self.viewer_graph  = ViewerGraph()
         self._event_count  = 0
         self._last_consolidate = time.monotonic()
         self._consolidate_task: asyncio.Task | None = None
+        self._consolidate_every_n = consolidate_every_n or self.CONSOLIDATE_EVERY_N
+        self._consolidate_every_s = consolidate_every_s or self.CONSOLIDATE_EVERY_S
+        self._can_consolidate = can_consolidate
 
     async def start(self) -> None:
         for et in (
@@ -249,7 +290,7 @@ class MemoryAgent:
             )
 
         self._event_count += 1
-        if self._event_count % self.CONSOLIDATE_EVERY_N == 0:
+        if self._event_count % self._consolidate_every_n == 0:
             asyncio.create_task(self._consolidate_now())
 
     def _event_to_entry(self, event: NovaEvent) -> dict[str, Any]:
@@ -268,10 +309,13 @@ class MemoryAgent:
     async def _consolidate_loop(self) -> None:
         while True:
             await asyncio.sleep(60)
-            if time.monotonic() - self._last_consolidate >= self.CONSOLIDATE_EVERY_S:
+            if time.monotonic() - self._last_consolidate >= self._consolidate_every_s:
                 await self._consolidate_now()
 
     async def _consolidate_now(self) -> None:
+        if self._can_consolidate is not None and not self._can_consolidate():
+            log.debug("Skipped consolidation because runtime is not idle")
+            return
         items = self.working.recent(20)
         await self.episodic.consolidate(items)
         self._last_consolidate = time.monotonic()

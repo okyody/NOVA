@@ -163,8 +163,37 @@ class PostgresRuntimeStore:
                     revision_no integer not null,
                     status text not null default 'draft',
                     config_json jsonb not null default '{{}}'::jsonb,
+                    changed_by text,
+                    change_note text,
+                    published_at timestamptz,
+                    rolled_back_at timestamptz,
                     created_at timestamptz not null default now()
                 )
+                '''
+            )
+            await conn.execute(
+                f'''alter table "{self._schema}".config_revisions add column if not exists changed_by text'''
+            )
+            await conn.execute(
+                f'''alter table "{self._schema}".config_revisions add column if not exists change_note text'''
+            )
+            await conn.execute(
+                f'''alter table "{self._schema}".config_revisions add column if not exists published_at timestamptz'''
+            )
+            await conn.execute(
+                f'''alter table "{self._schema}".config_revisions add column if not exists rolled_back_at timestamptz'''
+            )
+            await conn.execute(
+                f'''
+                create unique index if not exists idx_config_revisions_unique_revision
+                on "{self._schema}".config_revisions (tenant_id, resource_type, resource_id, revision_no)
+                '''
+            )
+            await conn.execute(
+                f'''
+                create unique index if not exists idx_config_revisions_unique_published
+                on "{self._schema}".config_revisions (tenant_id, resource_type, resource_id)
+                where status = 'published'
                 '''
             )
             await conn.execute(
@@ -505,6 +534,7 @@ class PostgresRuntimeStore:
         offset: int = 0,
         action: str | None = None,
         resource_type: str | None = None,
+        resource_id: str | None = None,
     ) -> list[dict[str, Any]]:
         if self._pool is None:
             return []
@@ -516,6 +546,9 @@ class PostgresRuntimeStore:
         if resource_type:
             args.append(resource_type)
             clauses.append(f"resource_type = ${len(args)}")
+        if resource_id:
+            args.append(resource_id)
+            clauses.append(f"resource_id = ${len(args)}")
         where_sql = f"where {' and '.join(clauses)}" if clauses else ""
         args.extend([limit, offset])
         async with self._pool.acquire() as conn:
@@ -615,9 +648,30 @@ class PostgresRuntimeStore:
             )
         return [dict(r) for r in rows]
 
-    async def get_tenant(self, tenant_id: str) -> dict[str, Any] | None:
-        rows = await self.list_tenants(tenant_ids=[tenant_id], limit=1, offset=0)
-        return rows[0] if rows else None
+    async def get_tenant(
+        self,
+        tenant_id: str,
+        *,
+        tenant_ids: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        if self._pool is None:
+            return None
+        clauses = ["id = $1"]
+        args: list[Any] = [tenant_id]
+        if tenant_ids:
+            args.append(tenant_ids)
+            clauses.append(f"id = any(${len(args)}::text[])")
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, name, slug, status, plan, created_at, updated_at
+                from "{self._schema}".tenants
+                where {' and '.join(clauses)}
+                limit 1
+                ''',
+                *args,
+            )
+        return dict(rows[0]) if rows else None
 
     async def create_role(self, role_id: str, tenant_id: str, name: str, scope: str, description: str = "") -> None:
         if self._pool is None:
@@ -793,6 +847,21 @@ class PostgresRuntimeStore:
                 *args,
             )
         return [dict(r) for r in rows]
+
+    async def get_permission(self, permission_id: str) -> dict[str, Any] | None:
+        if self._pool is None:
+            return None
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, code, resource, action, description, created_at
+                from "{self._schema}".permissions
+                where id = $1
+                limit 1
+                ''',
+                permission_id,
+            )
+        return dict(rows[0]) if rows else None
 
     async def set_role_permissions(self, role_id: str, permission_ids: list[str]) -> None:
         if self._pool is None:
@@ -1065,18 +1134,37 @@ class PostgresRuntimeStore:
         revision_no: int,
         config_json: dict[str, Any],
         status: str = "draft",
+        changed_by: str | None = None,
+        change_note: str | None = None,
     ) -> None:
         if self._pool is None:
             return
         async with self._pool.acquire() as conn:
+            existing = await conn.fetch(
+                f'''
+                select id
+                from "{self._schema}".config_revisions
+                where tenant_id = $1 and resource_type = $2 and resource_id = $3 and revision_no = $4 and id <> $5
+                limit 1
+                ''',
+                tenant_id,
+                resource_type,
+                resource_id,
+                revision_no,
+                revision_id,
+            )
+            if existing:
+                raise ValueError("revision_no already exists for this tenant/resource")
             await conn.execute(
                 f'''
                 insert into "{self._schema}".config_revisions
-                (id, tenant_id, resource_type, resource_id, revision_no, status, config_json)
-                values ($1,$2,$3,$4,$5,$6,$7::jsonb)
+                (id, tenant_id, resource_type, resource_id, revision_no, status, config_json, changed_by, change_note)
+                values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)
                 on conflict (id) do update set
                     status = excluded.status,
-                    config_json = excluded.config_json
+                    config_json = excluded.config_json,
+                    changed_by = excluded.changed_by,
+                    change_note = excluded.change_note
                 ''',
                 revision_id,
                 tenant_id,
@@ -1085,6 +1173,8 @@ class PostgresRuntimeStore:
                 revision_no,
                 status,
                 json.dumps(config_json, ensure_ascii=False, default=str),
+                changed_by,
+                change_note,
             )
 
     async def get_config_revision(
@@ -1103,7 +1193,7 @@ class PostgresRuntimeStore:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 f'''
-                select id, tenant_id, resource_type, resource_id, revision_no, status, config_json, created_at
+                select id, tenant_id, resource_type, resource_id, revision_no, status, config_json, changed_by, change_note, published_at, rolled_back_at, created_at
                 from "{self._schema}".config_revisions
                 where {' and '.join(clauses)}
                 limit 1
@@ -1118,6 +1208,8 @@ class PostgresRuntimeStore:
         *,
         config_json: dict[str, Any] | None = None,
         status: str | None = None,
+        changed_by: str | None = None,
+        change_note: str | None = None,
     ) -> None:
         if self._pool is None:
             return
@@ -1129,6 +1221,12 @@ class PostgresRuntimeStore:
         if config_json is not None:
             args.append(json.dumps(config_json, ensure_ascii=False, default=str))
             assignments.append(f"config_json = ${len(args)}::jsonb")
+        if changed_by is not None:
+            args.append(changed_by)
+            assignments.append(f"changed_by = ${len(args)}")
+        if change_note is not None:
+            args.append(change_note)
+            assignments.append(f"change_note = ${len(args)}")
         if not assignments:
             return
         args.append(revision_id)
@@ -1142,18 +1240,37 @@ class PostgresRuntimeStore:
                 *args,
             )
 
-    async def set_config_revision_status(self, revision_id: str, status: str) -> None:
+    async def set_config_revision_status(
+        self,
+        revision_id: str,
+        status: str,
+        *,
+        changed_by: str | None = None,
+        change_note: str | None = None,
+    ) -> None:
         if self._pool is None:
             return
+        assignments = ["status = $1"]
+        args: list[Any] = [status]
+        if changed_by is not None:
+            args.append(changed_by)
+            assignments.append(f"changed_by = ${len(args)}")
+        if change_note is not None:
+            args.append(change_note)
+            assignments.append(f"change_note = ${len(args)}")
+        if status == "published":
+            assignments.append("published_at = now()")
+        if status == "rolled_back":
+            assignments.append("rolled_back_at = now()")
+        args.append(revision_id)
         async with self._pool.acquire() as conn:
             await conn.execute(
                 f'''
                 update "{self._schema}".config_revisions
-                set status = $1
-                where id = $2
+                set {", ".join(assignments)}
+                where id = ${len(args)}
                 ''',
-                status,
-                revision_id,
+                *args,
             )
 
     async def publish_config_revision(
@@ -1161,6 +1278,8 @@ class PostgresRuntimeStore:
         revision_id: str,
         *,
         tenant_ids: list[str] | None = None,
+        changed_by: str | None = None,
+        change_note: str | None = None,
     ) -> dict[str, Any]:
         revision = await self.get_config_revision(revision_id, tenant_ids=tenant_ids)
         if not revision:
@@ -1186,12 +1305,19 @@ class PostgresRuntimeStore:
             await conn.execute(
                 f'''
                 update "{self._schema}".config_revisions
-                set status = 'published'
+                set status = 'published',
+                    changed_by = $2,
+                    change_note = $3,
+                    published_at = now()
                 where id = $1
                 ''',
                 revision_id,
+                changed_by,
+                change_note,
             )
         revision["status"] = "published"
+        revision["changed_by"] = changed_by
+        revision["change_note"] = change_note
         return revision
 
     async def rollback_config_revision(
@@ -1199,14 +1325,23 @@ class PostgresRuntimeStore:
         revision_id: str,
         *,
         tenant_ids: list[str] | None = None,
+        changed_by: str | None = None,
+        change_note: str | None = None,
     ) -> dict[str, Any]:
         revision = await self.get_config_revision(revision_id, tenant_ids=tenant_ids)
         if not revision:
             raise ValueError("config revision not found")
         if revision["status"] != "published":
             raise ValueError(f"only published revisions can be rolled back, got {revision['status']}")
-        await self.set_config_revision_status(revision_id, "rolled_back")
+        await self.set_config_revision_status(
+            revision_id,
+            "rolled_back",
+            changed_by=changed_by,
+            change_note=change_note,
+        )
         revision["status"] = "rolled_back"
+        revision["changed_by"] = changed_by
+        revision["change_note"] = change_note
         return revision
 
     async def list_config_revisions(
@@ -1244,7 +1379,7 @@ class PostgresRuntimeStore:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 f'''
-                select id, tenant_id, resource_type, resource_id, revision_no, status, config_json, created_at
+                select id, tenant_id, resource_type, resource_id, revision_no, status, config_json, changed_by, change_note, published_at, rolled_back_at, created_at
                 from "{self._schema}".config_revisions
                 {where_sql}
                 order by created_at desc
@@ -1253,3 +1388,38 @@ class PostgresRuntimeStore:
                 *args,
             )
         return [dict(r) for r in rows]
+
+    async def get_effective_config_revision(
+        self,
+        *,
+        tenant_id: str | None = None,
+        tenant_ids: list[str] | None = None,
+        resource_type: str,
+        resource_id: str,
+    ) -> dict[str, Any] | None:
+        if self._pool is None:
+            return None
+        clauses = [
+            "resource_type = $1",
+            "resource_id = $2",
+            "status = 'published'",
+        ]
+        args: list[Any] = [resource_type, resource_id]
+        if tenant_id:
+            args.append(tenant_id)
+            clauses.append(f"tenant_id = ${len(args)}")
+        elif tenant_ids:
+            args.append(tenant_ids)
+            clauses.append(f"tenant_id = any(${len(args)}::text[])")
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'''
+                select id, tenant_id, resource_type, resource_id, revision_no, status, config_json, changed_by, change_note, published_at, rolled_back_at, created_at
+                from "{self._schema}".config_revisions
+                where {' and '.join(clauses)}
+                order by revision_no desc, created_at desc
+                limit 1
+                ''',
+                *args,
+            )
+        return dict(rows[0]) if rows else None

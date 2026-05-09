@@ -101,7 +101,7 @@ class LLMClient:
         api_key:  str = "ollama",
         model:    str = "qwen2.5:14b",
         timeout:  float = 30.0,
-    ) -> None:
+    ) -> str:
         self._client = httpx.AsyncClient(
             base_url=base_url,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -401,6 +401,7 @@ class Orchestrator:
         full_text = ""
         sentence_buffer = ""
         sentence_index = 0
+        emitted_sentences: list[str] = []
 
         # Tool calling support
         tool_definitions = (
@@ -443,19 +444,26 @@ class Orchestrator:
                         sentence_buffer = ""
 
                         if sentence_text:
-                            await self._emit_sentence(
+                            corrected_sentence = await self._emit_sentence(
                                 sentence_text, sentence_index, trace_id,
                                 trigger, emotion, viewer_id, action_type,
                             )
+                            emitted_sentences.append(corrected_sentence)
                             sentence_index += 1
 
                 elif chunk.get("type") == "tool_call":
                     tc_data = chunk.get("tool_calls", [])
                     for tc in tc_data:
                         idx = tc.get("index", 0)
+                        try:
+                            idx = int(idx)
+                        except (TypeError, ValueError):
+                            idx = 0
+                        if idx < 0:
+                            idx = 0
                         func = tc.get("function", {})
                         # Accumulate tool call fragments
-                        if idx not in range(len(tool_calls_accumulated)):
+                        while len(tool_calls_accumulated) <= idx:
                             tool_calls_accumulated.append({
                                 "id": tc.get("id", ""),
                                 "type": "function",
@@ -494,17 +502,18 @@ class Orchestrator:
 
         # Flush remaining buffer as final sentence
         if sentence_buffer.strip():
-            await self._emit_sentence(
+            corrected_sentence = await self._emit_sentence(
                 sentence_buffer.strip(), sentence_index, trace_id,
                 trigger, emotion, viewer_id, action_type,
                 is_final=True,
             )
+            emitted_sentences.append(corrected_sentence)
         elif sentence_index > 0:
             # Mark the last emitted sentence as final
             pass  # Already emitted
 
-        # 6. Apply personality correction to full text and publish final decision
-        corrected = self._per.apply_character(full_text)
+        # 6. Use already-corrected sentence output to avoid double applying persona.
+        corrected = "".join(emitted_sentences) if emitted_sentences else self._per.apply_character(full_text)
 
         await self._bus.publish(NovaEvent(
             type=EventType.ORCHESTRATOR_OUT,
@@ -520,7 +529,7 @@ class Orchestrator:
                 "viewer_id":      viewer_id,
                 "trigger_type":   trigger.type.value,
                 "trace_id":       trace_id,
-                "sentence_count": sentence_index + (1 if sentence_buffer.strip() else 0),
+                "sentence_count": len(emitted_sentences),
                 "intent":         intent_result.intent.value if intent_result else "unknown",
                 "intent_confidence": intent_result.confidence if intent_result else 0.0,
                 "rag_used":       bool(rag_context),
@@ -537,6 +546,7 @@ class Orchestrator:
             source="orchestrator",
             trace_id=trace_id,
         ))
+        return corrected
 
         # 7. Trigger memory store
         await self._bus.publish(NovaEvent(
@@ -560,7 +570,7 @@ class Orchestrator:
         viewer_id: str | None,
         action_type: ActionType,
         is_final: bool = False,
-    ) -> None:
+    ) -> str:
         """Emit a complete sentence as ORCHESTRATOR_OUT for SafetyGuard → VoicePipeline."""
         # Apply personality correction per-sentence
         corrected = self._per.apply_character(text)
@@ -586,6 +596,7 @@ class Orchestrator:
             source="orchestrator",
             trace_id=trace_id,
         ))
+        return corrected
 
     def _build_messages(
         self,

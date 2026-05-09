@@ -135,12 +135,23 @@ class PlatformManager:
         """Get status of all adapters."""
         result = {}
         for platform, status in self._statuses.items():
+            last_event_ago_s = (
+                round(time.monotonic() - status.last_event_time, 1)
+                if status.last_event_time > 0 else None
+            )
+            health = "healthy"
+            if not status.running:
+                health = "down"
+            elif status.errors > 0:
+                health = "degraded"
+            elif last_event_ago_s is not None and last_event_ago_s > 120:
+                health = "stale"
             result[platform.value] = {
                 "running": status.running,
                 "events_received": status.events_received,
                 "errors": status.errors,
-                "last_event_ago_s": round(time.monotonic() - status.last_event_time, 1)
-                    if status.last_event_time > 0 else None,
+                "last_event_ago_s": last_event_ago_s,
+                "health": health,
             }
         return result
 

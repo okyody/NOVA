@@ -1,0 +1,12 @@
+{
+  "id": "ecommerce_live",
+  "title": "E-commerce Live",
+  "description": "偏带货、互动节奏和商品亮点说明的客户场景模板。",
+  "character_template": "energetic_host",
+  "prompt_template": "engagement_host",
+  "platform_template": "douyin_webhook",
+  "ai_profile": {
+    "knowledge_enabled": false,
+    "tools_enabled": true
+  }
+}

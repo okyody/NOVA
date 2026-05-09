@@ -17,6 +17,8 @@ class _FakeConn:
 
     async def fetch(self, query, *args):
         self.calls.append((query, args))
+        if 'from "public".config_revisions' in query and 'id <>' in query:
+            return []
         if "conversation_turns" in query:
             return [{
                 "id": "evt-1",
@@ -386,7 +388,7 @@ async def test_postgres_store_revision_state_machine():
             "status": state["status"],
         }
 
-    async def _fake_set_config_revision_status(revision_id: str, status: str):
+    async def _fake_set_config_revision_status(revision_id: str, status: str, **kwargs):
         state["status"] = status
 
     store.get_config_revision = _fake_get_config_revision  # type: ignore[method-assign]
@@ -398,3 +400,39 @@ async def test_postgres_store_revision_state_machine():
     rolled_back = await store.rollback_config_revision("rev-1", tenant_ids=["tenant-1"])
     assert rolled_back["status"] == "rolled_back"
     assert state["status"] == "rolled_back"
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_effective_config_revision():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+
+    row = await store.get_effective_config_revision(
+        tenant_id="tenant-1",
+        resource_type="runtime",
+        resource_id="nova",
+    )
+
+    assert row is not None
+    assert row["resource_type"] == "runtime"
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_create_revision_accepts_change_metadata():
+    store = PostgresRuntimeStore("postgresql://test")
+    store._pool = _FakePool()
+
+    await store.create_config_revision(
+        "rev-2",
+        "tenant-1",
+        "runtime",
+        "nova",
+        2,
+        {"foo": "bar"},
+        changed_by="operator",
+        change_note="acceptance change",
+    )
+
+    args = store._pool.calls[-1][1]
+    assert "operator" in args
+    assert "acceptance change" in args

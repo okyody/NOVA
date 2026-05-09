@@ -1,0 +1,86 @@
+{
+  "dataset": "E:\\NOVA\\evals\\minimal_ai_eval.json",
+  "total": 6,
+  "passed": 6,
+  "failed": 0,
+  "results": [
+    {
+      "case_id": "greeting-001",
+      "category": "greeting",
+      "passed": true,
+      "intent": "greeting",
+      "allow_tools": false,
+      "rag_top_k": 0,
+      "rag_score_threshold": 0.25,
+      "max_tokens": 80,
+      "tone_hint": "steady and conversational",
+      "response_style": "Respond warmly and quickly, greet the viewer naturally, and avoid over-explaining.",
+      "failures": []
+    },
+    {
+      "case_id": "question-001",
+      "category": "question",
+      "passed": true,
+      "intent": "question",
+      "allow_tools": false,
+      "rag_top_k": 5,
+      "rag_score_threshold": 0.18,
+      "max_tokens": 220,
+      "tone_hint": "steady and conversational",
+      "response_style": "Answer directly, prioritize factual grounding, and only elaborate when useful.",
+      "failures": []
+    },
+    {
+      "case_id": "command-001",
+      "category": "request/command",
+      "passed": true,
+      "intent": "request",
+      "allow_tools": true,
+      "rag_top_k": 2,
+      "rag_score_threshold": 0.2,
+      "max_tokens": 180,
+      "tone_hint": "energetic and playful",
+      "response_style": "Treat this as an action request, use tools when available, otherwise explain the limitation plainly. Let the response feel lively without becoming noisy.",
+      "failures": []
+    },
+    {
+      "case_id": "emotion-001",
+      "category": "emotion response",
+      "passed": true,
+      "intent": "emotion",
+      "allow_tools": false,
+      "rag_top_k": 0,
+      "rag_score_threshold": 0.25,
+      "max_tokens": 120,
+      "tone_hint": "gentle and empathetic",
+      "response_style": "Acknowledge the feeling first, mirror the emotion with empathy, then reply in character. Keep the tone steady and reassuring.",
+      "failures": []
+    },
+    {
+      "case_id": "rag-001",
+      "category": "rag answer",
+      "passed": true,
+      "intent": "question",
+      "allow_tools": false,
+      "rag_top_k": 5,
+      "rag_score_threshold": 0.18,
+      "max_tokens": 220,
+      "tone_hint": "steady and conversational",
+      "response_style": "Answer directly, prioritize factual grounding, and only elaborate when useful.",
+      "failures": []
+    },
+    {
+      "case_id": "tool-001",
+      "category": "tool call",
+      "passed": true,
+      "intent": "request",
+      "allow_tools": true,
+      "rag_top_k": 2,
+      "rag_score_threshold": 0.2,
+      "max_tokens": 180,
+      "tone_hint": "energetic and playful",
+      "response_style": "Treat this as an action request, use tools when available, otherwise explain the limitation plainly. Let the response feel lively without becoming noisy.",
+      "failures": []
+    }
+  ]
+}

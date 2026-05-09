@@ -1,0 +1,15 @@
+{
+  "platform": "douyin",
+  "enabled": true,
+  "priority": 90,
+  "room_id": "acceptance-room",
+  "app_id": "",
+  "app_secret": "",
+  "webhook_port": 8766,
+  "mode": "webhook",
+  "notes": {
+    "scenario": "webhook",
+    "recommended_use": "企业验收与服务端部署",
+    "post_steps": ["validate config", "reload runtime", "verify webhook route"]
+  }
+}

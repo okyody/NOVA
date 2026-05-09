@@ -99,8 +99,17 @@ create table if not exists public.config_revisions (
     revision_no integer not null,
     status text not null default 'draft',
     config_json jsonb not null default '{}'::jsonb,
+    changed_by text,
+    change_note text,
+    published_at timestamptz,
+    rolled_back_at timestamptz,
     created_at timestamptz not null default now()
 );
+
+alter table public.config_revisions add column if not exists changed_by text;
+alter table public.config_revisions add column if not exists change_note text;
+alter table public.config_revisions add column if not exists published_at timestamptz;
+alter table public.config_revisions add column if not exists rolled_back_at timestamptz;
 
 create table if not exists public.permissions (
     id text primary key,
@@ -140,5 +149,7 @@ create index if not exists idx_runtime_viewers_session_id on public.runtime_view
 create index if not exists idx_audit_logs_ts on public.audit_logs (ts desc);
 create index if not exists idx_roles_tenant_id on public.roles (tenant_id);
 create index if not exists idx_config_revisions_resource on public.config_revisions (resource_type, resource_id, revision_no desc);
+create unique index if not exists idx_config_revisions_unique_revision on public.config_revisions (tenant_id, resource_type, resource_id, revision_no);
+create unique index if not exists idx_config_revisions_unique_published on public.config_revisions (tenant_id, resource_type, resource_id) where status = 'published';
 create index if not exists idx_permissions_code on public.permissions (code);
 create index if not exists idx_users_tenant_id on public.users (tenant_id);

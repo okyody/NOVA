@@ -1,0 +1,16 @@
+{
+  "id": "compose_control_plane",
+  "title": "Compose Control Plane",
+  "description": "适用于 docker compose 的最小控制平面交付模板。",
+  "runtime": {
+    "role": "all"
+  },
+  "auth": {
+    "enabled": true
+  },
+  "persistence": {
+    "backend": "json",
+    "postgres_url": "postgresql://nova:nova@postgres:5432/nova"
+  },
+  "platforms": []
+}

@@ -1,0 +1,74 @@
+{
+  "version": "1.0",
+  "description": "Minimal deterministic AI routing and behavior regression set for NOVA 1.x",
+  "cases": [
+    {
+      "id": "greeting-001",
+      "category": "greeting",
+      "text": "你好呀",
+      "emotion": "neutral",
+      "expected": {
+        "intent": "greeting",
+        "allow_tools": false,
+        "rag_top_k_min": 0,
+        "max_tokens_max": 100
+      }
+    },
+    {
+      "id": "question-001",
+      "category": "question",
+      "text": "你为什么会唱歌？",
+      "emotion": "neutral",
+      "expected": {
+        "intent": "question",
+        "allow_tools": false,
+        "rag_top_k_min": 4,
+        "max_tokens_min": 200
+      }
+    },
+    {
+      "id": "command-001",
+      "category": "request/command",
+      "text": "帮我查一下今天的活动安排",
+      "emotion": "excited",
+      "expected": {
+        "intent_any_of": ["request", "command"],
+        "allow_tools": true,
+        "tone_hint_contains": "energetic"
+      }
+    },
+    {
+      "id": "emotion-001",
+      "category": "emotion response",
+      "text": "我今天有点难过",
+      "emotion": "sad",
+      "expected": {
+        "intent": "emotion",
+        "allow_tools": false,
+        "style_contains": "Acknowledge the feeling first"
+      }
+    },
+    {
+      "id": "rag-001",
+      "category": "rag answer",
+      "text": "这个机制是怎么工作的？",
+      "emotion": "neutral",
+      "expected": {
+        "intent": "question",
+        "rag_top_k_min": 4,
+        "rag_score_threshold_max": 0.2
+      }
+    },
+    {
+      "id": "tool-001",
+      "category": "tool call",
+      "text": "帮我检查一下事件日程并告诉我重点",
+      "emotion": "excited",
+      "expected": {
+        "intent_any_of": ["request", "command"],
+        "allow_tools": true,
+        "style_contains": "Treat this as an action request"
+      }
+    }
+  ]
+}

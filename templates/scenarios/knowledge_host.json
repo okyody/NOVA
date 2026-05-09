@@ -1,0 +1,12 @@
+{
+  "id": "knowledge_host",
+  "title": "Knowledge Host",
+  "description": "偏知识讲解和答疑的客户场景模板。",
+  "character_template": "supportive_companion",
+  "prompt_template": "qa_assistant",
+  "platform_template": "bilibili_acceptance",
+  "ai_profile": {
+    "knowledge_enabled": true,
+    "tools_enabled": false
+  }
+}

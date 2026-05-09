@@ -69,9 +69,9 @@ _RULES: list[tuple[re.Pattern, IntentType, str, float]] = [
      IntentType.COMMAND, "", 0.85),
 
     # Emotion expressions
-    (re.compile(r'(哈哈|嘻嘻|太好了|好棒|好厉害|不错|棒|赞|666|nb|牛逼|牛)'),
+    (re.compile(r'(哈哈|嘻嘻|开心|太好了|好棒|好厉害|不错|棒|赞|666|nb|牛逼|牛)'),
      IntentType.EMOTION, "positive", 0.7),
-    (re.compile(r'(无聊|讨厌|烦|差|垃圾|难看|不好|不行|失望)'),
+    (re.compile(r'(难过|伤心|失落|委屈|无聊|讨厌|烦|差|垃圾|难看|不好|不行|失望)'),
      IntentType.EMOTION, "negative", 0.7),
     (re.compile(r'(爱|喜欢|可爱|漂亮|帅|美|好看|心动)'),
      IntentType.EMOTION, "affection", 0.7),

@@ -92,6 +92,27 @@ class RecordingLLM:
         return None
 
 
+class ToolCallOnlyLLM:
+    def __init__(self) -> None:
+        self.model = "tool-llm"
+
+    async def stream_completion(self, messages, max_tokens: int = 200, temperature: float = 0.85, tools=None):
+        yield {
+            "type": "tool_call",
+            "tool_calls": [
+                {
+                    "index": 2,
+                    "id": "call-2",
+                    "function": {"name": "demo", "arguments": "{\"q\":\"x\"}"},
+                }
+            ],
+        }
+        yield {"type": "done", "finish_reason": "tool_calls"}
+
+    async def close(self) -> None:
+        return None
+
+
 def _chat_event(text: str) -> NovaEvent:
     return NovaEvent(
         type=EventType.CHAT_MESSAGE,
@@ -202,5 +223,78 @@ async def test_orchestrator_command_route_enables_tools_and_emotion_tone() -> No
         assert call["max_tokens"] == 180
         assert "Tone: energetic and playful" in call["messages"][-1]["content"]
         assert "Route requirement: Treat this as an action request" in call["messages"][-1]["content"]
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_does_not_double_apply_personality() -> None:
+    bus = EventBus(queue_size=128)
+    await bus.start()
+    try:
+        llm = RecordingLLM()
+
+        class MarkingPersonality(FakePersonality):
+            def apply_character(self, text: str) -> str:
+                return text + "!"
+
+        emitted: list[NovaEvent] = []
+
+        async def capture(event: NovaEvent) -> None:
+            emitted.append(event)
+
+        bus.subscribe(EventType.ORCHESTRATOR_OUT, capture, sub_id="orch-capture")
+
+        orchestrator = Orchestrator(
+            bus=bus,
+            llm=llm,
+            memory_agent=FakeMemory(),
+            emotion_agent=FakeEmotionAgent(EmotionState.neutral()),
+            personality_agent=MarkingPersonality(),
+            nlu=FakeNLU(IntentResult(intent=IntentType.GREETING, confidence=0.91)),
+        )
+
+        await orchestrator._pipeline(_chat_event("hello there"), ActionType.RESPOND)
+        await asyncio.sleep(0.05)
+
+        assert emitted
+        assert emitted[-1].payload["text"] == "received.!"
+        assert all("!!" not in event.payload["text"] for event in emitted)
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_handles_sparse_tool_call_indexes() -> None:
+    bus = EventBus(queue_size=128)
+    await bus.start()
+    try:
+        handled: list[list[dict[str, Any]]] = []
+
+        class DummyTools:
+            def all_definitions(self):
+                return [{"type": "function", "function": {"name": "demo", "description": "demo", "parameters": {"type": "object"}}}]
+
+        class RecordingExecutor:
+            async def handle_tool_calls(self, tool_calls):
+                handled.append(tool_calls)
+                return [{"tool_call_id": "call-2", "content": "tool ok"}]
+
+        orchestrator = Orchestrator(
+            bus=bus,
+            llm=ToolCallOnlyLLM(),
+            memory_agent=FakeMemory(),
+            emotion_agent=FakeEmotionAgent(EmotionState.neutral()),
+            personality_agent=FakePersonality(),
+            tool_registry=DummyTools(),
+            nlu=FakeNLU(IntentResult(intent=IntentType.COMMAND, confidence=0.95)),
+        )
+        orchestrator._tool_executor = RecordingExecutor()
+
+        await orchestrator._pipeline(_chat_event("check tools"), ActionType.RESPOND)
+
+        assert handled
+        assert handled[0][2]["function"]["name"] == "demo"
+        assert handled[0][2]["function"]["arguments"] == "{\"q\":\"x\"}"
     finally:
         await bus.stop()

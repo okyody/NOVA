@@ -23,6 +23,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class LLMConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="NOVA_LLM_")
 
+    provider: Literal["ollama", "openai_compatible"] = "ollama"
     base_url: str = "http://localhost:11434/v1"
     api_key: SecretStr = SecretStr("ollama")
     model: str = "qwen2.5:14b"
@@ -104,6 +105,15 @@ class ConsolidationConfig(BaseSettings):
     enabled: bool = True
     interval_s: int = 300
     min_entries: int = 20
+    run_only_when_idle: bool = True
+    min_idle_s: int = 60
+
+
+class MemoryConfig(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="NOVA_MEMORY_")
+
+    enabled: bool = True
+    working_memory_maxlen: int = 50
 
 
 class PerceptionConfig(BaseSettings):
@@ -129,6 +139,7 @@ class AvatarConfig(BaseSettings):
     enabled: bool = False
     ws_port: int = 8767
     driver: Literal["web", "vtube_studio"] = "web"
+    output_strategy: Literal["text_only", "voice_only", "voice_and_avatar"] = "voice_only"
 
 
 class PersistenceConfig(BaseSettings):
@@ -219,6 +230,8 @@ class PlatformConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="NOVA_PLATFORM_")
 
     platform: str = "bilibili"
+    enabled: bool = True
+    priority: int = 100
     room_id: int | str = 0
     token: SecretStr = SecretStr("")
     uid: int = 0
@@ -265,6 +278,7 @@ class NovaSettings(BaseSettings):
     nlu: NLUConfig = Field(default_factory=NLUConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     consolidation: ConsolidationConfig = Field(default_factory=ConsolidationConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     avatar: AvatarConfig = Field(default_factory=AvatarConfig)
@@ -319,7 +333,7 @@ def _flatten_config(raw: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     for key, value in raw.items():
         if isinstance(value, dict) and key in (
             "llm", "voice", "character", "knowledge", "nlu", "tools",
-            "consolidation", "perception", "safety", "avatar",
+            "consolidation", "memory", "perception", "safety", "avatar",
             "persistence", "resilience", "auth", "observability", "runtime",
         ):
             result[key] = value

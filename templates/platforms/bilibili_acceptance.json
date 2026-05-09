@@ -1,0 +1,13 @@
+{
+  "platform": "bilibili",
+  "enabled": true,
+  "priority": 100,
+  "room_id": 123456,
+  "token": "",
+  "uid": 0,
+  "notes": {
+    "scenario": "acceptance",
+    "recommended_use": "本地预览与最终验收",
+    "post_steps": ["validate config", "reload runtime", "send test-event"]
+  }
+}

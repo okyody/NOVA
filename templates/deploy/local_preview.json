@@ -1,0 +1,16 @@
+{
+  "id": "local_preview",
+  "title": "Local Preview",
+  "description": "适用于 Windows EXE 或本地 Python 的预览模板。",
+  "runtime": {
+    "role": "all"
+  },
+  "auth": {
+    "enabled": false
+  },
+  "persistence": {
+    "backend": "json",
+    "postgres_url": "postgresql://nova:nova@localhost:5432/nova"
+  },
+  "platforms": []
+}
