@@ -209,11 +209,11 @@ def test_studio_dashboard_contains_control_plane() -> None:
     assert "output strategy" in response.text
     assert "Memory Enabled" in response.text
     assert "Center Map" in response.text
-    assert "运行态总览" in response.text
-    assert "控制平面总览" in response.text
-    assert "配置中心" in response.text
-    assert "平台中心" in response.text
-    assert "验收中心" in response.text
+    assert "Runtime Center" in response.text
+    assert "Control Center" in response.text
+    assert "Config Center" in response.text
+    assert "Platform Center" in response.text
+    assert "Acceptance Center" in response.text
     assert "Quick Start" in response.text
     assert "Quick Actions" in response.text
 

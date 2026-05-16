@@ -215,20 +215,20 @@ STUDIO_HTML = """<!DOCTYPE html>
       <div class="grid grid-cols-2 gap-4 mb-6">
         <div class="card p-4">
           <div class="section-kicker mb-3">Quick Start</div>
-          <div class="text-xs text-white/50 mb-3">按这个顺序完成 1.0 交付链，不需要自己猜功能藏在哪里。</div>
+          <div class="text-xs text-white/50 mb-3">Follow the 1.0 delivery path in order so each required action is obvious from the first screen.</div>
           <div id="startup-checklist" class="space-y-2 text-xs text-white/70"></div>
         </div>
         <div class="card p-4">
           <div class="section-kicker mb-3">Quick Actions</div>
           <div class="grid grid-cols-2 gap-2">
-            <button onclick="showTab('config'); loadConfigForm()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-2 text-xs">打开设置面板</button>
-            <button onclick="showTab('control'); refreshControlPlane()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-2 text-xs">刷新控制平面</button>
-            <button onclick="reloadCharacterConfig()" class="bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 rounded px-2 py-2 text-xs">重载角色卡</button>
-            <button onclick="showTab('events')" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-2 text-xs">查看实时事件</button>
-            <button onclick="refreshCurrentUser()" class="bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 rounded px-2 py-2 text-xs">刷新当前用户</button>
-            <button onclick="loadConfigForm()" class="bg-green-500/20 hover:bg-green-500/30 text-green-200 rounded px-2 py-2 text-xs">重新加载配置</button>
+            <button onclick="showTab('config'); loadConfigForm()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-2 text-xs">Open Config Center</button>
+            <button onclick="showTab('control'); refreshControlPlane()" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-2 text-xs">Refresh Control Plane</button>
+            <button onclick="reloadCharacterConfig()" class="bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 rounded px-2 py-2 text-xs">Reload Character Card</button>
+            <button onclick="showTab('events')" class="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-2 text-xs">Open Event Stream</button>
+            <button onclick="refreshCurrentUser()" class="bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 rounded px-2 py-2 text-xs">Refresh Current User</button>
+            <button onclick="loadConfigForm()" class="bg-green-500/20 hover:bg-green-500/30 text-green-200 rounded px-2 py-2 text-xs">Reload Saved Config</button>
           </div>
-          <div id="dashboard-banner" class="mt-3 text-xs text-white/50">首次启动时，先在右上角登录，再到 Config 和 Control 完成配置。</div>
+          <div id="dashboard-banner" class="mt-3 text-xs text-white/50">Sign in first, then finish Config and Control setup before running acceptance checks.</div>
         </div>
       </div>
 
@@ -236,15 +236,15 @@ STUDIO_HTML = """<!DOCTYPE html>
         <div class="section-kicker mb-3">Center Map</div>
         <div class="section-copy mb-4">Use the overview as the command surface for the nine operating centers that make up NOVA 1.0 delivery.</div>
         <div class="grid grid-cols-3 gap-3">
-          <button onclick="showTab('dashboard'); scrollIntoViewId('overview-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">首页总览台<br><span class='text-white/50'>Overview, readiness, quick actions</span></button>
-          <button onclick="showTab('dashboard'); scrollIntoViewId('runtime-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">运行态总览<br><span class='text-white/50'>Workers, issues, hot state, event flow</span></button>
-          <button onclick="showTab('control'); scrollIntoViewId('control-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">控制平面总览<br><span class='text-white/50'>Tenants, users, roles, revisions</span></button>
-          <button onclick="showTab('config'); scrollIntoViewId('config-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">配置中心<br><span class='text-white/50'>Providers, toggles, output strategy</span></button>
-          <button onclick="showTab('control'); scrollIntoViewId('role-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">角色中心<br><span class='text-white/50'>Roles, permissions, bindings</span></button>
-          <button onclick="showTab('platforms'); scrollIntoViewId('platform-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">平台中心<br><span class='text-white/50'>Catalog, templates, runtime status</span></button>
-          <button onclick="showTab('control'); scrollIntoViewId('audit-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">审计中心<br><span class='text-white/50'>Audit explorer and evidence</span></button>
-          <button onclick="showTab('dashboard'); scrollIntoViewId('diagnostics-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">诊断中心<br><span class='text-white/50'>Diagnostics, metrics, runtime issues</span></button>
-          <button onclick="showTab('guide'); scrollIntoViewId('acceptance-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">验收中心<br><span class='text-white/50'>Checks, walkthroughs, delivery proof</span></button>
+          <button onclick="showTab('dashboard'); scrollIntoViewId('overview-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">Overview Center<br><span class='text-white/50'>Overview, readiness, quick actions</span></button>
+          <button onclick="showTab('dashboard'); scrollIntoViewId('runtime-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">Runtime Center<br><span class='text-white/50'>Workers, issues, hot state, event flow</span></button>
+          <button onclick="showTab('control'); scrollIntoViewId('control-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">Control Center<br><span class='text-white/50'>Tenants, users, roles, revisions</span></button>
+          <button onclick="showTab('config'); scrollIntoViewId('config-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">Config Center<br><span class='text-white/50'>Providers, toggles, output strategy</span></button>
+          <button onclick="showTab('control'); scrollIntoViewId('role-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">Role Center<br><span class='text-white/50'>Roles, permissions, bindings</span></button>
+          <button onclick="showTab('platforms'); scrollIntoViewId('platform-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">Platform Center<br><span class='text-white/50'>Catalog, templates, runtime status</span></button>
+          <button onclick="showTab('control'); scrollIntoViewId('audit-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">Audit Center<br><span class='text-white/50'>Audit explorer and evidence</span></button>
+          <button onclick="showTab('dashboard'); scrollIntoViewId('diagnostics-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">Diagnostics Center<br><span class='text-white/50'>Diagnostics, metrics, runtime issues</span></button>
+          <button onclick="showTab('guide'); scrollIntoViewId('acceptance-center')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-3 text-left text-xs">Acceptance Center<br><span class='text-white/50'>Checks, walkthroughs, delivery proof</span></button>
         </div>
       </div>
 
@@ -523,13 +523,13 @@ STUDIO_HTML = """<!DOCTYPE html>
             <input id="platform-config-filter" class="bg-black/20 border border-white/10 rounded px-2 py-2 text-xs text-white/70" placeholder="optional platform filter">
             <button onclick="loadPlatformConfig()" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-2 text-xs">Load Config</button>
           </div>
-          <div class="text-xs text-white/50 mb-3">每行一个 JSON 对象。先套模板，再按平台修改字段，再校验后保存。</div>
+          <div class="text-xs text-white/50 mb-3">Use one JSON object per line. Start from a template, adapt it for the selected platform, validate it, then save.</div>
           <textarea id="platform-config-editor" class="w-full h-[360px] bg-black/20 border border-white/10 rounded px-2 py-2 text-xs text-white/70 mb-3"></textarea>
           <div class="flex gap-2">
             <button onclick="validatePlatformConfig()" class="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 rounded px-3 py-2 text-xs">Validate</button>
             <button onclick="savePlatformConfig()" class="bg-green-500/20 hover:bg-green-500/30 text-green-200 rounded px-3 py-2 text-xs">Save</button>
           </div>
-          <div id="platform-config-status" class="text-xs text-white/40 mt-3">平台配置保存后需 Reload Platforms 或重启使其生效。</div>
+          <div id="platform-config-status" class="text-xs text-white/40 mt-3">Saved platform config still needs Reload Platforms or a process restart before adapters consume it.</div>
         </div>
         <div class="card p-4">
           <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Platform Event Debug</div>
@@ -562,18 +562,18 @@ STUDIO_HTML = """<!DOCTYPE html>
       <div class="grid grid-cols-2 gap-4 mb-4">
         <div class="card p-4">
           <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Initialization Wizard</div>
-          <div class="text-xs text-white/50 mb-3">按 1.0 控制面初始化顺序完成租户、角色、权限、用户和 revision，不需要自己猜页面路径。</div>
+          <div class="text-xs text-white/50 mb-3">Complete tenants, roles, permissions, users, and revisions in the recommended 1.0 order.</div>
           <div id="wizard-init-steps" class="space-y-2 text-xs text-white/70"></div>
         </div>
         <div class="card p-4">
           <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Configuration Wizard</div>
-          <div class="text-xs text-white/50 mb-3">按运行模式直接套用配置预设，再进入 Config 页微调。</div>
+          <div class="text-xs text-white/50 mb-3">Apply a runtime preset first, then fine-tune the result in the Config center.</div>
           <div class="grid grid-cols-1 gap-2">
             <button onclick="applyConfigPreset('local')" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-2 text-xs text-left">Local Preview Preset</button>
             <button onclick="applyConfigPreset('control')" class="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 rounded px-3 py-2 text-xs text-left">Control Plane Preset</button>
             <button onclick="applyConfigPreset('acceptance')" class="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 rounded px-3 py-2 text-xs text-left">Acceptance Preset</button>
           </div>
-          <div class="text-xs text-white/40 mt-3">预设只填核心字段，不会替你自动保存。</div>
+          <div class="text-xs text-white/40 mt-3">Presets fill only the core fields. Review and save them yourself.</div>
         </div>
       </div>
       <div class="grid grid-cols-2 gap-4 mt-4">
@@ -583,7 +583,7 @@ STUDIO_HTML = """<!DOCTYPE html>
             <button onclick="loadAiEvalReport()" class="bg-white/10 hover:bg-white/20 text-white rounded px-3 py-2 text-xs">Load AI Eval</button>
             <button onclick="previewRouting()" class="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 rounded px-3 py-2 text-xs">Routing Preview</button>
           </div>
-          <textarea id="ai-routing-input" class="w-full h-16 bg-black/20 border border-white/10 rounded px-2 py-2 text-xs text-white/70 mb-2" placeholder="输入一条消息，预览 NLU / routing 结果"></textarea>
+          <textarea id="ai-routing-input" class="w-full h-16 bg-black/20 border border-white/10 rounded px-2 py-2 text-xs text-white/70 mb-2" placeholder="Type one message to preview NLU and routing behavior."></textarea>
           <input id="ai-routing-emotion" class="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs w-full mb-3" placeholder="emotion: neutral/excited/sad/calm/curious">
           <div id="ai-eval-summary" class="max-h-[240px] overflow-auto text-xs text-white/70"></div>
         </div>
@@ -595,7 +595,7 @@ STUDIO_HTML = """<!DOCTYPE html>
       <div class="grid grid-cols-2 gap-4">
         <div class="card p-4" id="acceptance-center">
           <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Acceptance Mode</div>
-          <div class="text-xs text-white/50 mb-3">对照 1.0 最终验收链，自动检查当前工作台可见条件。</div>
+          <div class="text-xs text-white/50 mb-3">Run the final 1.0 acceptance path against the current workstation and environment.</div>
           <div class="flex gap-2 mb-3">
             <button onclick="runAcceptanceChecks()" class="bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 rounded px-3 py-2 text-xs">Run Acceptance Checks</button>
             <button onclick="openDiagnosticsCenter()" class="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 rounded px-3 py-2 text-xs">One-click Diagnose</button>
@@ -606,7 +606,7 @@ STUDIO_HTML = """<!DOCTYPE html>
         </div>
         <div class="card p-4">
           <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Wizard Feedback</div>
-          <div class="text-xs text-white/50 mb-3">这里显示向导填充、验收模式、导航引导的即时结果。</div>
+          <div class="text-xs text-white/50 mb-3">This area shows wizard actions, acceptance runs, and guided-navigation feedback in real time.</div>
           <div id="wizard-log" class="max-h-[320px] overflow-auto text-xs text-white/70"></div>
         </div>
       </div>
@@ -904,7 +904,7 @@ STUDIO_HTML = """<!DOCTYPE html>
       </div>
       <div class="card p-4 mt-4">
         <div class="text-[10px] text-white/40 uppercase tracking-wider mb-3">Resource Detail</div>
-        <div class="text-xs text-white/40 mb-2">点击各列表里的 `Inspect` 可查看当前资源详情。</div>
+        <div class="text-xs text-white/40 mb-2">Use Inspect in any list to open the current resource detail.</div>
         <div id="resource-detail" class="max-h-[220px] overflow-auto text-xs text-white/70"></div>
       </div>
       <div class="card p-4 mt-4">
@@ -1082,7 +1082,7 @@ async function getJson(url) {
 
 function configSummary(config) {
   return [
-    `Port: ${config.port Open '8765'}`,
+    `Port: ${config.port ?? '8765'}`,
     `Role: ${config.runtime?.role || 'all'}`,
     `Auth: ${config.auth?.enabled ? 'enabled' : 'disabled'}`,
     `LLM: ${config.llm?.provider || 'n/a'} / ${config.llm?.model || 'n/a'}`,
@@ -1130,8 +1130,8 @@ function renderEnvironmentSummary() {
   if (!target) return;
   const status = lastStudioStatus || {};
   const config = lastConfigState || {};
-  const authEnabled = config.runtime?.auth_enabled Open status.auth?.enabled Open false;
-  const hotState = status.runtime?.hot_state Open false;
+  const authEnabled = config.runtime?.auth_enabled ?? status.auth?.enabled ?? false;
+  const hotState = status.runtime?.hot_state ?? false;
   const workerCount = Object.keys(lastDiagnosticsState?.workers?.platforms || {}).length;
   const items = [
     `Config File: ${config.config_path || '未加载'}`,
@@ -1205,9 +1205,9 @@ function renderHotStateSummary(summary) {
   const rows = [
     `session_id: ${payload.session_id || 'n/a'}`,
     `status: ${payload.status || 'n/a'}`,
-    `chat_count: ${payload.chat_count Open 'n/a'}`,
-    `gift_count: ${payload.gift_count Open 'n/a'}`,
-    `follow_count: ${payload.follow_count Open 'n/a'}`,
+    `chat_count: ${payload.chat_count ?? 'n/a'}`,
+    `gift_count: ${payload.gift_count ?? 'n/a'}`,
+    `follow_count: ${payload.follow_count ?? 'n/a'}`,
     `last_output: ${payload.last_output || 'n/a'}`,
   ];
   rows.forEach((item) => {
@@ -1246,7 +1246,7 @@ function renderWorkerStatus(workers) {
     const row = document.createElement('div');
     const health = state.health || 'unknown';
     row.className = 'list-card';
-    row.innerHTML = `<div class="flex-1"><div class="list-title">Platform ${name}</div><div class="list-meta">running=${state.running} | events=${state.events_received} | errors=${state.errors} | last_event_ago_s=${state.last_event_ago_s Open 'n/a'}</div></div>
+    row.innerHTML = `<div class="flex-1"><div class="list-title">Platform ${name}</div><div class="list-meta">running=${state.running} | events=${state.events_received} | errors=${state.errors} | last_event_ago_s=${state.last_event_ago_s ?? 'n/a'}</div></div>
       <span class="pill ${health === 'healthy' ? 'pill-ok' : health === 'down' ? 'pill-err' : 'pill-warn'}">${health}</span>`;
     target.appendChild(row);
   });
@@ -1358,7 +1358,7 @@ function fillConfigForm(configPath, config) {
   document.getElementById('config-path').textContent = configPath || 'nova.config.json';
   document.getElementById('config-display').textContent = configSummary(config || {});
   document.getElementById('config-json-preview').value = JSON.stringify(config || {}, null, 2);
-  document.getElementById('cfg-port').value = config.port Open 8765;
+  document.getElementById('cfg-port').value = config.port ?? 8765;
   document.getElementById('cfg-runtime-role').value = config.runtime?.role || 'all';
   document.getElementById('cfg-auth-enabled').checked = !!config.auth?.enabled;
   document.getElementById('cfg-llm-provider').value = config.llm?.provider || 'ollama';
@@ -1375,21 +1375,21 @@ function fillConfigForm(configPath, config) {
   document.getElementById('cfg-knowledge-embedding-backend').value = config.knowledge?.embedding_backend || 'ollama';
   document.getElementById('cfg-knowledge-embedding-model').value = config.knowledge?.embedding_model || '';
   document.getElementById('cfg-knowledge-vector-backend').value = config.knowledge?.vector_backend || 'memory';
-  document.getElementById('cfg-knowledge-top-k').value = config.knowledge?.retrieval_top_k Open 3;
-  document.getElementById('cfg-knowledge-score-threshold').value = config.knowledge?.retrieval_score_threshold Open 0.25;
+  document.getElementById('cfg-knowledge-top-k').value = config.knowledge?.retrieval_top_k ?? 3;
+  document.getElementById('cfg-knowledge-score-threshold').value = config.knowledge?.retrieval_score_threshold ?? 0.25;
   document.getElementById('cfg-persistence-backend').value = config.persistence?.backend || 'json';
   document.getElementById('cfg-postgres-url').value = config.persistence?.postgres_url || '';
   document.getElementById('cfg-redis-url').value = config.persistence?.redis_url || '';
   document.getElementById('cfg-tools-enabled').checked = !!config.tools?.enabled;
-  document.getElementById('cfg-tools-max-rounds').value = config.tools?.max_rounds Open 2;
-  document.getElementById('cfg-nlu-confidence-threshold').value = config.nlu?.confidence_threshold Open 0.6;
+  document.getElementById('cfg-tools-max-rounds').value = config.tools?.max_rounds ?? 2;
+  document.getElementById('cfg-nlu-confidence-threshold').value = config.nlu?.confidence_threshold ?? 0.6;
   document.getElementById('cfg-memory-enabled').checked = !!config.memory?.enabled;
-  document.getElementById('cfg-memory-working-maxlen').value = config.memory?.working_memory_maxlen Open 50;
+  document.getElementById('cfg-memory-working-maxlen').value = config.memory?.working_memory_maxlen ?? 50;
   document.getElementById('cfg-consolidation-enabled').checked = !!config.consolidation?.enabled;
   document.getElementById('cfg-consolidation-idle-only').checked = !!config.consolidation?.run_only_when_idle;
-  document.getElementById('cfg-consolidation-interval-s').value = config.consolidation?.interval_s Open 300;
-  document.getElementById('cfg-consolidation-min-entries').value = config.consolidation?.min_entries Open 20;
-  document.getElementById('cfg-consolidation-min-idle-s').value = config.consolidation?.min_idle_s Open 60;
+  document.getElementById('cfg-consolidation-interval-s').value = config.consolidation?.interval_s ?? 300;
+  document.getElementById('cfg-consolidation-min-entries').value = config.consolidation?.min_entries ?? 20;
+  document.getElementById('cfg-consolidation-min-idle-s').value = config.consolidation?.min_idle_s ?? 60;
   renderEnvironmentSummary();
   renderStartupChecklist();
 }
@@ -1522,7 +1522,7 @@ function renderList(elementId, items, fields) {
   (items || []).forEach((item) => {
     const row = document.createElement('div');
     row.className = 'event-row';
-    row.textContent = fields.map((field) => `${field}: ${item[field] Open ''}`).join(' | ');
+    row.textContent = fields.map((field) => `${field}: ${item[field] ?? ''}`).join(' | ');
     target.appendChild(row);
   });
 }
@@ -1541,10 +1541,10 @@ function renderActionList(elementId, items, fields, inspector) {
     summary.className = 'flex-1';
     const title = document.createElement('div');
     title.className = 'list-title';
-    title.textContent = String(item[fields[0]] Open 'unnamed');
+    title.textContent = String(item[fields[0]] ?? 'unnamed');
     const meta = document.createElement('div');
     meta.className = 'list-meta';
-    meta.textContent = fields.slice(1).map((field) => `${field}: ${item[field] Open ''}`).join(' | ');
+    meta.textContent = fields.slice(1).map((field) => `${field}: ${item[field] ?? ''}`).join(' | ');
     summary.appendChild(title);
     summary.appendChild(meta);
     if (item.status) {
@@ -1752,10 +1752,10 @@ async function exportAcceptanceReport() {
 }
 
 function renderPlatformSummary(summary, issues) {
-  document.getElementById('platform-summary-catalog').textContent = String(summary?.catalog_count Open 0);
-  document.getElementById('platform-summary-configured').textContent = String(summary?.configured_count Open 0);
-  document.getElementById('platform-summary-healthy').textContent = String(summary?.healthy_count Open 0);
-  document.getElementById('platform-summary-issues').textContent = String((issues || []).length + (summary?.disabled_count Open 0));
+  document.getElementById('platform-summary-catalog').textContent = String(summary?.catalog_count ?? 0);
+  document.getElementById('platform-summary-configured').textContent = String(summary?.configured_count ?? 0);
+  document.getElementById('platform-summary-healthy').textContent = String(summary?.healthy_count ?? 0);
+  document.getElementById('platform-summary-issues').textContent = String((issues || []).length + (summary?.disabled_count ?? 0));
 }
 
 function renderPlatformCatalogRows(items) {
@@ -1794,8 +1794,8 @@ function renderPlatformStatusRows(result) {
     row.className = 'list-card';
     row.innerHTML = `<div class="flex-1">
       <div class="list-title">${item.catalog?.label || item.platform}</div>
-      <div class="list-meta">enabled=${item.configured?.enabled Open true} | priority=${item.configured?.priority Open 100} | mode=${item.configured?.mode || item.catalog?.recommended_mode || 'n/a'} | running=${runtime.running Open false}</div>
-      <div class="list-meta">events=${runtime.events_received Open 0} | errors=${runtime.errors Open 0} | last_event_ago_s=${runtime.last_event_ago_s Open 'n/a'} | valid=${validation.valid Open true}</div>
+      <div class="list-meta">enabled=${item.configured?.enabled ?? true} | priority=${item.configured?.priority ?? 100} | mode=${item.configured?.mode || item.catalog?.recommended_mode || 'n/a'} | running=${runtime.running ?? false}</div>
+      <div class="list-meta">events=${runtime.events_received ?? 0} | errors=${runtime.errors ?? 0} | last_event_ago_s=${runtime.last_event_ago_s ?? 'n/a'} | valid=${validation.valid ?? true}</div>
     </div>
     <span class="pill ${health === 'healthy' ? 'pill-ok' : health === 'down' ? 'pill-err' : 'pill-warn'}">${health}</span>`;
     row.onclick = () => {
@@ -2199,9 +2199,9 @@ async function loadAiEvalReport() {
     summary.innerHTML = '';
     const rows = [
       `Dataset: ${report.dataset || 'n/a'}`,
-      `Total: ${report.total Open 0}`,
-      `Passed: ${report.passed Open 0}`,
-      `Failed: ${report.failed Open 0}`,
+      `Total: ${report.total ?? 0}`,
+      `Passed: ${report.passed ?? 0}`,
+      `Failed: ${report.failed ?? 0}`,
     ];
     rows.forEach((item) => {
       const row = document.createElement('div');
