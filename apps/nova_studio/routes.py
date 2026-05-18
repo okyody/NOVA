@@ -1082,7 +1082,7 @@ async function getJson(url) {
 
 function configSummary(config) {
   return [
-    `Port: ${config.port ?? '8765'}`,
+    `Port: ${config.port Open '8765'}`,
     `Role: ${config.runtime?.role || 'all'}`,
     `Auth: ${config.auth?.enabled ? 'enabled' : 'disabled'}`,
     `LLM: ${config.llm?.provider || 'n/a'} / ${config.llm?.model || 'n/a'}`,
@@ -1103,11 +1103,11 @@ function renderStartupChecklist() {
   const runtimeReady = !!lastHealthState?.status;
   const controlReady = !!document.getElementById('tenant-list')?.children?.length;
   const steps = [
-    {label: '1. 服务已启动并可访问工作台', done: runtimeReady, action: "showTab('dashboard')"},
-    {label: '2. 使用有效用户登录 Studio', done: authUser !== 'anonymous', action: ''},
-    {label: '3. 检查并保存当前运行配置', done: configReady, action: "showTab('config'); loadConfigForm()"},
-    {label: '4. 创建租户、用户、角色、权限', done: controlReady, action: "showTab('control'); refreshControlPlane()"},
-    {label: '5. 发布 revision 并查看事件/历史', done: !!lastStudioStatus?.history, action: "showTab('control')"},
+    {label: '1. Service started and workspace reachable', done: runtimeReady, action: "showTab('dashboard')"},
+    {label: '2. Sign in with a valid Studio user', done: authUser !== 'anonymous', action: ''},
+    {label: '3. Review and save the active runtime configuration', done: configReady, action: "showTab('config'); loadConfigForm()"},
+    {label: '4. Create tenants, users, roles, and permissions', done: controlReady, action: "showTab('control'); refreshControlPlane()"},
+    {label: '5. Publish a revision and verify event and history flow', done: !!lastStudioStatus?.history, action: "showTab('control')"},
   ];
   target.innerHTML = '';
   steps.forEach((step) => {
@@ -1117,7 +1117,7 @@ function renderStartupChecklist() {
     if (step.action) {
       const button = document.createElement('button');
       button.className = 'bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-[11px]';
-      button.textContent = '前往';
+      button.textContent = 'Open';
       button.setAttribute('onclick', step.action);
       row.appendChild(button);
     }
@@ -1130,11 +1130,11 @@ function renderEnvironmentSummary() {
   if (!target) return;
   const status = lastStudioStatus || {};
   const config = lastConfigState || {};
-  const authEnabled = config.runtime?.auth_enabled ?? status.auth?.enabled ?? false;
-  const hotState = status.runtime?.hot_state ?? false;
+  const authEnabled = config.runtime?.auth_enabled Open status.auth?.enabled Open false;
+  const hotState = status.runtime?.hot_state Open false;
   const workerCount = Object.keys(lastDiagnosticsState?.workers?.platforms || {}).length;
   const items = [
-    `Config File: ${config.config_path || '未加载'}`,
+    `Config File: ${config.config_path || 'not loaded'}`,
     `Auth: ${authEnabled ? 'enabled' : 'disabled'}`,
     `Hot State: ${hotState ? 'enabled' : 'disabled'}`,
     `History: ${(status.history?.conversation_count || 0)} convo / ${(status.history?.safety_count || 0)} safety`,
@@ -1205,9 +1205,9 @@ function renderHotStateSummary(summary) {
   const rows = [
     `session_id: ${payload.session_id || 'n/a'}`,
     `status: ${payload.status || 'n/a'}`,
-    `chat_count: ${payload.chat_count ?? 'n/a'}`,
-    `gift_count: ${payload.gift_count ?? 'n/a'}`,
-    `follow_count: ${payload.follow_count ?? 'n/a'}`,
+    `chat_count: ${payload.chat_count Open 'n/a'}`,
+    `gift_count: ${payload.gift_count Open 'n/a'}`,
+    `follow_count: ${payload.follow_count Open 'n/a'}`,
     `last_output: ${payload.last_output || 'n/a'}`,
   ];
   rows.forEach((item) => {
@@ -1246,7 +1246,7 @@ function renderWorkerStatus(workers) {
     const row = document.createElement('div');
     const health = state.health || 'unknown';
     row.className = 'list-card';
-    row.innerHTML = `<div class="flex-1"><div class="list-title">Platform ${name}</div><div class="list-meta">running=${state.running} | events=${state.events_received} | errors=${state.errors} | last_event_ago_s=${state.last_event_ago_s ?? 'n/a'}</div></div>
+    row.innerHTML = `<div class="flex-1"><div class="list-title">Platform ${name}</div><div class="list-meta">running=${state.running} | events=${state.events_received} | errors=${state.errors} | last_event_ago_s=${state.last_event_ago_s Open 'n/a'}</div></div>
       <span class="pill ${health === 'healthy' ? 'pill-ok' : health === 'down' ? 'pill-err' : 'pill-warn'}">${health}</span>`;
     target.appendChild(row);
   });
@@ -1258,7 +1258,7 @@ function applyInjectPreset(mode) {
     document.getElementById('inject-priority').value = 'NORMAL';
     document.getElementById('inject-viewer-id').value = 'demo-viewer';
     document.getElementById('inject-username').value = 'DemoViewer';
-    document.getElementById('inject-text').value = '你好，NOVA，做一次运行态测试';
+    document.getElementById('inject-text').value = 'Hello NOVA, run a runtime verification.';
   } else if (mode === 'gift') {
     document.getElementById('inject-event-type').value = 'GIFT_RECEIVED';
     document.getElementById('inject-priority').value = 'HIGH';
@@ -1358,7 +1358,7 @@ function fillConfigForm(configPath, config) {
   document.getElementById('config-path').textContent = configPath || 'nova.config.json';
   document.getElementById('config-display').textContent = configSummary(config || {});
   document.getElementById('config-json-preview').value = JSON.stringify(config || {}, null, 2);
-  document.getElementById('cfg-port').value = config.port ?? 8765;
+  document.getElementById('cfg-port').value = config.port Open 8765;
   document.getElementById('cfg-runtime-role').value = config.runtime?.role || 'all';
   document.getElementById('cfg-auth-enabled').checked = !!config.auth?.enabled;
   document.getElementById('cfg-llm-provider').value = config.llm?.provider || 'ollama';
@@ -1375,21 +1375,21 @@ function fillConfigForm(configPath, config) {
   document.getElementById('cfg-knowledge-embedding-backend').value = config.knowledge?.embedding_backend || 'ollama';
   document.getElementById('cfg-knowledge-embedding-model').value = config.knowledge?.embedding_model || '';
   document.getElementById('cfg-knowledge-vector-backend').value = config.knowledge?.vector_backend || 'memory';
-  document.getElementById('cfg-knowledge-top-k').value = config.knowledge?.retrieval_top_k ?? 3;
-  document.getElementById('cfg-knowledge-score-threshold').value = config.knowledge?.retrieval_score_threshold ?? 0.25;
+  document.getElementById('cfg-knowledge-top-k').value = config.knowledge?.retrieval_top_k Open 3;
+  document.getElementById('cfg-knowledge-score-threshold').value = config.knowledge?.retrieval_score_threshold Open 0.25;
   document.getElementById('cfg-persistence-backend').value = config.persistence?.backend || 'json';
   document.getElementById('cfg-postgres-url').value = config.persistence?.postgres_url || '';
   document.getElementById('cfg-redis-url').value = config.persistence?.redis_url || '';
   document.getElementById('cfg-tools-enabled').checked = !!config.tools?.enabled;
-  document.getElementById('cfg-tools-max-rounds').value = config.tools?.max_rounds ?? 2;
-  document.getElementById('cfg-nlu-confidence-threshold').value = config.nlu?.confidence_threshold ?? 0.6;
+  document.getElementById('cfg-tools-max-rounds').value = config.tools?.max_rounds Open 2;
+  document.getElementById('cfg-nlu-confidence-threshold').value = config.nlu?.confidence_threshold Open 0.6;
   document.getElementById('cfg-memory-enabled').checked = !!config.memory?.enabled;
-  document.getElementById('cfg-memory-working-maxlen').value = config.memory?.working_memory_maxlen ?? 50;
+  document.getElementById('cfg-memory-working-maxlen').value = config.memory?.working_memory_maxlen Open 50;
   document.getElementById('cfg-consolidation-enabled').checked = !!config.consolidation?.enabled;
   document.getElementById('cfg-consolidation-idle-only').checked = !!config.consolidation?.run_only_when_idle;
-  document.getElementById('cfg-consolidation-interval-s').value = config.consolidation?.interval_s ?? 300;
-  document.getElementById('cfg-consolidation-min-entries').value = config.consolidation?.min_entries ?? 20;
-  document.getElementById('cfg-consolidation-min-idle-s').value = config.consolidation?.min_idle_s ?? 60;
+  document.getElementById('cfg-consolidation-interval-s').value = config.consolidation?.interval_s Open 300;
+  document.getElementById('cfg-consolidation-min-entries').value = config.consolidation?.min_entries Open 20;
+  document.getElementById('cfg-consolidation-min-idle-s').value = config.consolidation?.min_idle_s Open 60;
   renderEnvironmentSummary();
   renderStartupChecklist();
 }
@@ -1472,11 +1472,11 @@ async function loadConfigForm() {
     fillConfigForm(result.config_path, result.config_json || {});
     await loadCapabilityCatalog();
     document.getElementById('config-save-status').textContent = 'Settings loaded from disk.';
-    setDashboardBanner('配置已加载，可直接在 Config 页编辑并保存。', 'ok');
+    setDashboardBanner('Configuration loaded. You can edit and save directly in the Config center.', 'ok');
   } catch (err) {
     controlLog(`config load failed: ${err.message}`);
     document.getElementById('config-save-status').textContent = `Load failed: ${err.message}`;
-    setDashboardBanner(`配置加载失败：${err.message}`, 'error');
+    setDashboardBanner(`Configuration load failed: ${err.message}`, 'error');
   }
 }
 
@@ -1491,15 +1491,15 @@ async function saveConfigForm() {
     controlLog(`config saved: ${result.config_path}`);
     setDashboardBanner(
       result.restart_required
-        ? '配置已保存，部分改动需要重启 EXE 才会生效。'
-        : '配置已保存，当前可安全热更新的设置已生效。',
+        ? 'Configuration saved. Some changes require restarting the EXE to take effect.'
+        : 'Configuration saved. Safe hot-reload settings are already active.',
       result.restart_required ? 'warn' : 'ok'
     );
     await loadConfigForm();
   } catch (err) {
     controlLog(`config save failed: ${err.message}`);
     document.getElementById('config-save-status').textContent = `Save failed: ${err.message}`;
-    setDashboardBanner(`配置保存失败：${err.message}`, 'error');
+    setDashboardBanner(`Configuration save failed: ${err.message}`, 'error');
   }
 }
 
@@ -1508,11 +1508,11 @@ async function reloadCharacterConfig() {
     const result = await postJson('/api/config/reload', 'POST', {});
     document.getElementById('config-save-status').textContent = `Character reloaded: ${result.character || 'ok'}`;
     controlLog(`character reload ok: ${result.character || 'ok'}`);
-    setDashboardBanner(`角色卡已重载：${result.character || 'ok'}`, 'ok');
+    setDashboardBanner(`Character card reloaded: ${result.character || 'ok'}`, 'ok');
   } catch (err) {
     controlLog(`character reload failed: ${err.message}`);
     document.getElementById('config-save-status').textContent = `Reload failed: ${err.message}`;
-    setDashboardBanner(`角色卡重载失败：${err.message}`, 'error');
+    setDashboardBanner(`Character card reload failed: ${err.message}`, 'error');
   }
 }
 
@@ -1522,7 +1522,7 @@ function renderList(elementId, items, fields) {
   (items || []).forEach((item) => {
     const row = document.createElement('div');
     row.className = 'event-row';
-    row.textContent = fields.map((field) => `${field}: ${item[field] ?? ''}`).join(' | ');
+    row.textContent = fields.map((field) => `${field}: ${item[field] Open ''}`).join(' | ');
     target.appendChild(row);
   });
 }
@@ -1541,10 +1541,10 @@ function renderActionList(elementId, items, fields, inspector) {
     summary.className = 'flex-1';
     const title = document.createElement('div');
     title.className = 'list-title';
-    title.textContent = String(item[fields[0]] ?? 'unnamed');
+    title.textContent = String(item[fields[0]] Open 'unnamed');
     const meta = document.createElement('div');
     meta.className = 'list-meta';
-    meta.textContent = fields.slice(1).map((field) => `${field}: ${item[field] ?? ''}`).join(' | ');
+    meta.textContent = fields.slice(1).map((field) => `${field}: ${item[field] Open ''}`).join(' | ');
     summary.appendChild(title);
     summary.appendChild(meta);
     if (item.status) {
@@ -1655,12 +1655,12 @@ function renderWizardSteps() {
   const target = document.getElementById('wizard-init-steps');
   if (!target) return;
   const steps = [
-    {label: 'Step 1 · 打开 Config 并保存基础配置', action: () => { showTab('config'); loadConfigForm(); }},
-    {label: 'Step 2 · 创建 Tenant', action: () => { showTab('control'); scrollIntoViewId('tenant-list'); }},
-    {label: 'Step 3 · 创建 Role 与 Permission', action: () => { showTab('control'); scrollIntoViewId('role-list'); }},
-    {label: 'Step 4 · 创建 User 并绑定 Role', action: () => { showTab('control'); scrollIntoViewId('user-list'); }},
-    {label: 'Step 5 · 创建并发布 Revision', action: () => { showTab('control'); scrollIntoViewId('revision-list'); }},
-    {label: 'Step 6 · 运行 Acceptance Mode', action: () => { showTab('guide'); runAcceptanceChecks(); }},
+    {label: 'Step 1 ? Open Config and save the baseline runtime settings', action: () => { showTab('config'); loadConfigForm(); }},
+    {label: 'Step 2 ? Create a tenant', action: () => { showTab('control'); scrollIntoViewId('tenant-list'); }},
+    {label: 'Step 3 ? Create a role and bind permissions', action: () => { showTab('control'); scrollIntoViewId('role-list'); }},
+    {label: 'Step 4 ? Create a user and bind a role', action: () => { showTab('control'); scrollIntoViewId('user-list'); }},
+    {label: 'Step 5 ? Create and publish a revision', action: () => { showTab('control'); scrollIntoViewId('revision-list'); }},
+    {label: 'Step 6 ? Run Acceptance Mode', action: () => { showTab('guide'); runAcceptanceChecks(); }},
   ];
   target.innerHTML = '';
   steps.forEach((step) => {
@@ -1752,10 +1752,10 @@ async function exportAcceptanceReport() {
 }
 
 function renderPlatformSummary(summary, issues) {
-  document.getElementById('platform-summary-catalog').textContent = String(summary?.catalog_count ?? 0);
-  document.getElementById('platform-summary-configured').textContent = String(summary?.configured_count ?? 0);
-  document.getElementById('platform-summary-healthy').textContent = String(summary?.healthy_count ?? 0);
-  document.getElementById('platform-summary-issues').textContent = String((issues || []).length + (summary?.disabled_count ?? 0));
+  document.getElementById('platform-summary-catalog').textContent = String(summary?.catalog_count Open 0);
+  document.getElementById('platform-summary-configured').textContent = String(summary?.configured_count Open 0);
+  document.getElementById('platform-summary-healthy').textContent = String(summary?.healthy_count Open 0);
+  document.getElementById('platform-summary-issues').textContent = String((issues || []).length + (summary?.disabled_count Open 0));
 }
 
 function renderPlatformCatalogRows(items) {
@@ -1794,8 +1794,8 @@ function renderPlatformStatusRows(result) {
     row.className = 'list-card';
     row.innerHTML = `<div class="flex-1">
       <div class="list-title">${item.catalog?.label || item.platform}</div>
-      <div class="list-meta">enabled=${item.configured?.enabled ?? true} | priority=${item.configured?.priority ?? 100} | mode=${item.configured?.mode || item.catalog?.recommended_mode || 'n/a'} | running=${runtime.running ?? false}</div>
-      <div class="list-meta">events=${runtime.events_received ?? 0} | errors=${runtime.errors ?? 0} | last_event_ago_s=${runtime.last_event_ago_s ?? 'n/a'} | valid=${validation.valid ?? true}</div>
+      <div class="list-meta">enabled=${item.configured?.enabled Open true} | priority=${item.configured?.priority Open 100} | mode=${item.configured?.mode || item.catalog?.recommended_mode || 'n/a'} | running=${runtime.running Open false}</div>
+      <div class="list-meta">events=${runtime.events_received Open 0} | errors=${runtime.errors Open 0} | last_event_ago_s=${runtime.last_event_ago_s Open 'n/a'} | valid=${validation.valid Open true}</div>
     </div>
     <span class="pill ${health === 'healthy' ? 'pill-ok' : health === 'down' ? 'pill-err' : 'pill-warn'}">${health}</span>`;
     row.onclick = () => {
@@ -2199,9 +2199,9 @@ async function loadAiEvalReport() {
     summary.innerHTML = '';
     const rows = [
       `Dataset: ${report.dataset || 'n/a'}`,
-      `Total: ${report.total ?? 0}`,
-      `Passed: ${report.passed ?? 0}`,
-      `Failed: ${report.failed ?? 0}`,
+      `Total: ${report.total Open 0}`,
+      `Passed: ${report.passed Open 0}`,
+      `Failed: ${report.failed Open 0}`,
     ];
     rows.forEach((item) => {
       const row = document.createElement('div');
@@ -2570,7 +2570,7 @@ async function refreshCurrentUser() {
     controlLog(`auth refresh failed: ${err.message}`);
     const pill = document.getElementById('current-user-pill');
     if (pill) pill.className = 'pill pill-warn';
-    setDashboardBanner(`用户上下文刷新失败：${err.message}`, 'warn');
+    setDashboardBanner(`User context refresh failed: ${err.message}`, 'warn');
   }
 }
 
@@ -2583,10 +2583,10 @@ async function studioLogin() {
     await refreshCurrentUser();
     await refreshControlPlane();
     controlLog(`login ok: ${userId}`);
-    setDashboardBanner(`登录成功：${userId}`, 'ok');
+    setDashboardBanner(`Login succeeded: ${userId}`, 'ok');
   } catch (err) {
     controlLog(`login failed: ${err.message}`);
-    setDashboardBanner(`登录失败：${err.message}`, 'error');
+    setDashboardBanner(`Login failed: ${err.message}`, 'error');
   }
 }
 
@@ -2602,7 +2602,7 @@ function studioLogout() {
   document.getElementById('dash-auth-roles').textContent = 'none';
   document.getElementById('dash-auth-permission-count').textContent = '0';
   controlLog('logged out');
-  setDashboardBanner('已退出登录。需要控制面权限时，请重新登录。', 'warn');
+  setDashboardBanner('Signed out. Log in again whenever you need control-plane permissions.', 'warn');
   renderStartupChecklist();
 }
 
